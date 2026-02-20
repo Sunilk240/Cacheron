@@ -1,0 +1,61 @@
+/* GoDeeper */
+
+.go-deeper {
+    margin: var(--space-lg) 0;
+}
+
+.go-deeper-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    width: 100%;
+    padding: var(--space-sm) 0;
+    background: transparent;
+    border: none;
+    color: var(--text-accent);
+    font-family: var(--font-sans);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    cursor: pointer;
+    transition: color var(--transition-fast);
+}
+
+.go-deeper-toggle:hover {
+    color: var(--accent-primary);
+}
+
+.go-deeper-icon {
+    font-size: var(--fs-xs);
+    transition: transform var(--transition-base);
+}
+
+.go-deeper-label {
+    white-space: nowrap;
+}
+
+.go-deeper-line {
+    flex: 1;
+    height: 1px;
+    background: var(--border-glass);
+    margin-left: var(--space-sm);
+}
+
+/* Collapse/Expand animation */
+.go-deeper-content {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows var(--transition-slow);
+}
+
+.go-deeper.expanded .go-deeper-content {
+    grid-template-rows: 1fr;
+}
+
+.go-deeper-inner {
+    overflow: hidden;
+}
+
+.go-deeper.expanded .go-deeper-inner {
+    padding-top: var(--space-md);
+    padding-bottom: var(--space-sm);
+}

@@ -1,0 +1,64 @@
+﻿================================================================================
+CACHERON ΓÇö modelConfig.js Verification
+================================================================================
+
+--- KV Cache (FP16, T=2048, B=1) ---
+Expected from master doc:
+  SmolLM2-135M: 45 MB
+  SmolLM2-360M: 80 MB
+  Gemma-3-1B:   ~52 MB (hybrid)
+  Llama-3.2-3B: 224 MB
+  Llama-2-7B:   1,024 MB
+
+Computed:
+  SmolLM2-135M: 45 MB (47185920 bytes)
+  SmolLM2-360M: 80 MB (83886080 bytes)
+  Gemma-3-1B: 124 MB (130023424 bytes)
+  Llama-3.2-3B: 224 MB (234881024 bytes)
+  Llama-2-7B: 1.0 GB (1073741824 bytes)
+
+--- Model Weights (FP16) ---
+Expected: 270 MB, 720 MB, 2000 MB, 6000 MB, 14000 MB
+
+Computed:
+  SmolLM2-135M: 257 MB
+  SmolLM2-360M: 687 MB
+  Gemma-3-1B: 1.9 GB
+  Llama-3.2-3B: 5.6 GB
+  Llama-2-7B: 13.0 GB
+
+--- Total (FP16 weights + FP16 KV, T=2048) ---
+Expected: 315, 800, ~2052, 6224, 15024 MB
+
+Computed:
+  SmolLM2-135M: 302 MB
+  SmolLM2-360M: 767 MB
+  Gemma-3-1B: 2.0 GB
+  Llama-3.2-3B: 5.8 GB
+  Llama-2-7B: 14.0 GB
+
+--- Fits Table (FP16) ---
+Model               Raspberry Pi 4    iPhone 15 Pro     RTX 3060          A100 40GB         
+SmolLM2-135M        Γ£à  302 MB         Γ£à  302 MB         Γ£à  302 MB         Γ£à  302 MB         
+SmolLM2-360M        Γ£à  767 MB         Γ£à  767 MB         Γ£à  767 MB         Γ£à  767 MB         
+Gemma-3-1B          Γ¥î  2.0 GB         Γ£à  2.0 GB         Γ£à  2.0 GB         Γ£à  2.0 GB         
+Llama-3.2-3B        Γ¥î  5.8 GB         Γ¥î  5.8 GB         Γ£à  5.8 GB         Γ£à  5.8 GB         
+Llama-2-7B          Γ¥î  14.0 GB        Γ¥î  14.0 GB        Γ¥î  14.0 GB        Γ£à  14.0 GB        
+
+--- Fits Table (INT4 weights + FP16 KV) ---
+Model               Raspberry Pi 4    iPhone 15 Pro     RTX 3060          A100 40GB         
+SmolLM2-135M        Γ£à  109 MB         Γ£à  109 MB         Γ£à  109 MB         Γ£à  109 MB         
+SmolLM2-360M        Γ£à  252 MB         Γ£à  252 MB         Γ£à  252 MB         Γ£à  252 MB         
+Gemma-3-1B          Γ£à  601 MB         Γ£à  601 MB         Γ£à  601 MB         Γ£à  601 MB         
+Llama-3.2-3B        Γ¥î  1.6 GB         Γ£à  1.6 GB         Γ£à  1.6 GB         Γ£à  1.6 GB         
+Llama-2-7B          Γ¥î  4.3 GB         Γ¥î  4.3 GB         Γ£à  4.3 GB         Γ£à  4.3 GB         
+
+--- Flash Attention Tile Sizes ---
+  Raspberry Pi 4: SmolLM2-135M:45, SmolLM2-360M:45, Gemma-3-1B:22, Llama-3.2-3B:31, Llama-2-7B:31
+  iPhone 15 Pro: SmolLM2-135M:255, SmolLM2-360M:255, Gemma-3-1B:127, Llama-3.2-3B:180, Llama-2-7B:180
+  RTX 3060: SmolLM2-135M:78, SmolLM2-360M:78, Gemma-3-1B:39, Llama-3.2-3B:55, Llama-2-7B:55
+  A100 40GB: SmolLM2-135M:201, SmolLM2-360M:201, Gemma-3-1B:101, Llama-3.2-3B:142, Llama-2-7B:142
+
+================================================================================
+Verification complete. Compare above with master design doc tables.
+================================================================================

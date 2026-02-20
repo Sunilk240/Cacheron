@@ -1,0 +1,82 @@
+/* ChapterNav */
+
+.chapter-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-subtle);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.chapter-nav::-webkit-scrollbar {
+    display: none;
+}
+
+.chapter-tab {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.chapter-tab:hover {
+    color: var(--text-secondary);
+    background: var(--bg-hover);
+    border-color: var(--border-glass);
+}
+
+.chapter-tab.active {
+    color: var(--text-primary);
+    background: var(--accent-primary-glow);
+    border-color: var(--border-active);
+}
+
+.chapter-tab-number {
+    font-weight: var(--fw-bold);
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.chapter-tab.active .chapter-tab-number {
+    color: var(--accent-primary);
+}
+
+.chapter-tab-title {
+    font-weight: var(--fw-medium);
+}
+
+.chapter-tab-arrow {
+    color: var(--text-muted);
+    font-size: var(--fs-xs);
+    margin-left: var(--space-sm);
+    opacity: 0.4;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .chapter-tab-title {
+        display: none;
+    }
+
+    .chapter-tab-arrow {
+        display: none;
+    }
+
+    .chapter-nav {
+        justify-content: center;
+    }
+}

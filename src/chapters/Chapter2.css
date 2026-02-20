@@ -1,0 +1,401 @@
+/* ============================================================
+   Chapter 2: Shrinking the Cache
+   ============================================================ */
+
+/* --- Attention Mode Toggle --- */
+.attn-mode-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.attn-mode-toggle {
+    display: flex;
+    gap: var(--space-xs);
+    padding: 3px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    width: fit-content;
+}
+
+.attn-mode-btn {
+    padding: var(--space-sm) var(--space-lg);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-medium);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.attn-mode-btn:hover {
+    color: var(--text-secondary);
+}
+
+.attn-mode-btn.active {
+    background: var(--accent-primary);
+    color: white;
+    font-weight: var(--fw-semibold);
+}
+
+.attn-mode-content {
+    padding: var(--space-lg);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xl);
+    align-items: center;
+}
+
+/* Heads visualization */
+.attn-heads-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.attn-heads-label {
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+}
+
+.attn-heads-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-items: center;
+}
+
+.attn-head {
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    border: 2px solid;
+    transition: all var(--transition-fast);
+}
+
+.attn-heads-more {
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    margin-left: 4px;
+}
+
+.attn-group-arrows {
+    display: flex;
+    gap: 6px;
+    font-size: var(--fs-xs);
+    padding: 4px 0;
+    flex-wrap: wrap;
+}
+
+.attn-arrow-group {
+    font-size: 10px;
+    letter-spacing: -2px;
+}
+
+.attn-mode-info h4 {
+    font-size: var(--fs-base);
+    font-weight: var(--fw-bold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-sm);
+}
+
+.attn-mode-info p {
+    font-size: var(--fs-sm);
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: var(--space-md);
+}
+
+.attn-mode-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-sm);
+}
+
+.attn-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--space-sm);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    text-align: center;
+}
+
+.attn-stat-label {
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+}
+
+.attn-stat-value {
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-bold);
+    color: var(--text-primary);
+}
+
+.attn-stat-value.savings {
+    color: var(--status-fits);
+}
+
+/* Compare bars */
+.attn-compare-bars {
+    padding: var(--space-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.attn-compare-bars h4 {
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-xs);
+}
+
+/* --- PagedAttention --- */
+.paged-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.paged-toggle {
+    display: flex;
+    gap: var(--space-xs);
+    padding: 3px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    width: fit-content;
+}
+
+.paged-toggle-btn {
+    padding: var(--space-sm) var(--space-lg);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-medium);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.paged-toggle-btn:hover {
+    color: var(--text-secondary);
+}
+
+.paged-toggle-btn.active {
+    background: var(--accent-primary);
+    color: white;
+    font-weight: var(--fw-semibold);
+}
+
+.paged-content {
+    padding: var(--space-lg);
+}
+
+.paged-viz h4 {
+    font-size: var(--fs-base);
+    font-weight: var(--fw-bold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-lg);
+}
+
+/* Memory blocks */
+.mem-blocks-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    margin-bottom: var(--space-lg);
+}
+
+.mem-block-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+}
+
+.mem-block-label {
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+    font-weight: var(--fw-semibold);
+    min-width: 100px;
+}
+
+.mem-blocks {
+    display: flex;
+    gap: 3px;
+    flex-wrap: wrap;
+}
+
+.mem-block {
+    width: 44px;
+    height: 32px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: var(--fw-bold);
+    font-family: var(--font-mono);
+    transition: all var(--transition-fast);
+}
+
+.mem-block.used {
+    border: 1px solid;
+}
+
+.mem-block.seq1 {
+    background: rgba(124, 106, 255, 0.15);
+    border-color: rgba(124, 106, 255, 0.3);
+    color: var(--accent-primary);
+}
+
+.mem-block.seq2 {
+    background: rgba(78, 205, 196, 0.15);
+    border-color: rgba(78, 205, 196, 0.3);
+    color: var(--accent-secondary);
+}
+
+.mem-block.seq3 {
+    background: rgba(255, 215, 59, 0.15);
+    border-color: rgba(255, 215, 59, 0.3);
+    color: var(--accent-gold);
+}
+
+.mem-block.wasted {
+    background: rgba(255, 107, 107, 0.08);
+    border: 1px dashed rgba(255, 107, 107, 0.25);
+    color: var(--text-muted);
+}
+
+.mem-block.free {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px dashed var(--border-glass);
+    color: var(--text-muted);
+}
+
+.mem-waste-label {
+    font-size: var(--fs-xs);
+    color: var(--status-fails);
+    font-weight: var(--fw-semibold);
+}
+
+/* Paged layout */
+.paged-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xl);
+    margin-bottom: var(--space-lg);
+}
+
+.paged-col-label {
+    display: block;
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    font-weight: var(--fw-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: var(--space-sm);
+}
+
+.paged-blocks {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+}
+
+.block-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--fs-xs);
+}
+
+.block-table th,
+.block-table td {
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--font-mono);
+}
+
+.block-table th {
+    color: var(--text-muted);
+    font-weight: var(--fw-semibold);
+}
+
+.seq1-row td {
+    color: var(--accent-primary);
+}
+
+.seq2-row td {
+    color: var(--accent-secondary);
+}
+
+.seq3-row td {
+    color: var(--accent-gold);
+}
+
+/* Callouts */
+.paged-callout {
+    padding: var(--space-md);
+    border-radius: var(--radius-md);
+    font-size: var(--fs-sm);
+    line-height: 1.6;
+}
+
+.paged-callout.warn {
+    background: var(--accent-warm-glow);
+    border: 1px solid rgba(255, 107, 107, 0.15);
+    color: var(--text-secondary);
+}
+
+.paged-callout.success {
+    background: var(--accent-secondary-glow);
+    border: 1px solid rgba(78, 205, 196, 0.15);
+    color: var(--text-secondary);
+}
+
+/* --- GQA Comparison --- */
+.gqa-compare {
+    padding: var(--space-lg);
+    overflow-x: auto;
+}
+
+.gqa-compare h4 {
+    font-size: var(--fs-base);
+    font-weight: var(--fw-semibold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-lg);
+}
+
+.gqa-compare-wrapper {
+    overflow-x: auto;
+}
+
+.savings {
+    color: var(--status-fits) !important;
+}
+
+.no-savings {
+    color: var(--text-muted) !important;
+}
+
+/* --- Responsive --- */
+@media (max-width: 768px) {
+    .attn-mode-content {
+        grid-template-columns: 1fr;
+    }
+
+    .attn-mode-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .paged-grid {
+        grid-template-columns: 1fr;
+    }
+}
