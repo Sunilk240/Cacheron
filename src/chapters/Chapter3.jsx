@@ -1,181 +1,405 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { MODELS, GPUS, tileSize, formatBytes } from '../data/modelConfig';
-import ExplanationPanel from '../components/ExplanationPanel';
-import GoDeeper from '../components/GoDeeper';
 import './Chapter3.css';
 
-// --- Memory Hierarchy Diagram ---
+// ============================================================
+// 1. GPU MEMORY HIERARCHY
+//    Pyramid: SRAM (fast, tiny) → HBM (medium) → DRAM (slow, huge)
+// ============================================================
+
 function MemoryHierarchy({ gpu }) {
-    const levels = [
-        { label: 'Registers', size: '~KB', speed: 'Instant', color: '#4ecdc4', width: '15%' },
-        { label: 'SRAM (L2 Cache)', size: `${gpu.sram_mb} MB`, speed: '~10 TB/s', color: '#7c6aff', width: '30%' },
-        { label: 'HBM / DRAM', size: `${gpu.budget_mb >= 1024 ? (gpu.budget_mb / 1024).toFixed(0) + ' GB' : gpu.budget_mb + ' MB'}`, speed: `${gpu.bandwidth_gbs} GB/s`, color: '#ff6b6b', width: '60%' },
-        { label: 'CPU RAM / SSD', size: '16-64 GB', speed: '~25 GB/s', color: '#6b688a', width: '100%' },
+    const tiers = [
+        {
+            name: 'SRAM (On-chip)',
+            size: `${gpu.sram_mb} MB`,
+            speed: '~19 TB/s',
+            ratio: '1×',
+            desc: 'Registers + L1/L2 cache. Blazing fast, tiny capacity.',
+            cls: 'sram-tier',
+            icon: '⚡',
+        },
+        {
+            name: 'HBM / VRAM',
+            size: `${(gpu.budget_mb / 1024).toFixed(0)} GB`,
+            speed: `${gpu.bandwidth_gbs} GB/s`,
+            ratio: `~${Math.round(19000 / gpu.bandwidth_gbs)}× slower`,
+            desc: 'Main GPU memory. Where model weights and KV cache live.',
+            cls: 'hbm-tier',
+            icon: '🧠',
+        },
+        {
+            name: 'CPU DRAM',
+            size: '16-64 GB',
+            speed: '~50 GB/s',
+            ratio: `~${Math.round(19000 / 50)}× slower`,
+            desc: 'System RAM. Used for offloading when GPU memory is full.',
+            cls: 'dram-tier',
+            icon: '💾',
+        },
     ];
 
     return (
-        <div className="mem-hierarchy glass-card">
-            <h4 className="mem-hier-title">Memory Hierarchy — {gpu.name}</h4>
-            <div className="mem-hier-pyramid">
-                {levels.map((level, i) => (
-                    <div key={i} className="mem-hier-level" style={{ width: level.width }}>
-                        <div className="mem-hier-bar" style={{ background: level.color }}>
-                            <span className="mem-hier-label">{level.label}</span>
+        <section className="chapter-section">
+            <h3 className="section-title">The GPU Memory Hierarchy — Speed vs Capacity</h3>
+            <p className="section-desc">
+                To understand why Flash Attention matters, you need to understand the GPU's memory hierarchy.
+                GPUs have a small but <strong>extremely fast</strong> on-chip SRAM (registers and L1/L2 cache)
+                and a large but <strong>much slower</strong> HBM (High Bandwidth Memory, the main VRAM).
+                The speed difference is enormous — SRAM is roughly <strong>50-100×</strong> faster than HBM.
+            </p>
+            <p className="section-desc">
+                Standard attention computes everything in HBM — reading Q, K, V from HBM, writing the
+                intermediate attention matrix back to HBM, then reading it again. Flash Attention's key
+                insight is: <strong>do all the work in SRAM and never materialize the full attention matrix</strong>.
+            </p>
+
+            <div className="mem-hierarchy glass-card">
+                <div className="mem-pyramid">
+                    {tiers.map((tier, i) => (
+                        <div key={i} className={`mem-tier ${tier.cls}`}>
+                            <div className="mem-tier-icon">{tier.icon}</div>
+                            <div className="mem-tier-info">
+                                <div className="mem-tier-name">{tier.name}</div>
+                                <div className="mem-tier-specs">{tier.size} — {tier.desc}</div>
+                            </div>
+                            <div className="mem-tier-speed">
+                                {tier.speed}
+                                <div className="mem-tier-ratio">{tier.ratio}</div>
+                            </div>
                         </div>
-                        <div className="mem-hier-stats mono">
-                            <span>{level.size}</span>
-                            <span>{level.speed}</span>
-                        </div>
-                    </div>
-                ))}
+                    ))}
+                </div>
+                <div style={{ textAlign: 'center', fontSize: 'var(--fs-xs)', color: 'var(--text-muted)' }}>
+                    {gpu.name}: {gpu.sram_mb} MB SRAM, {(gpu.budget_mb / 1024).toFixed(0)} GB HBM at {gpu.bandwidth_gbs} GB/s
+                </div>
             </div>
-            <div className="mem-hier-legend">
-                <span>← Faster, smaller</span>
-                <span>Slower, larger →</span>
-            </div>
-        </div>
+        </section>
     );
 }
 
-// --- Standard vs Flash Attention Comparison ---
-function AttentionComparison({ model, gpu }) {
-    const [activeView, setActiveView] = useState('standard');
-    const blockSize = tileSize(gpu, model, 2);
-    const seqLen = 2048;
 
-    // Standard attention IO: read Q,K,V from HBM + write S to HBM + read S from HBM + write O to HBM
-    // S = N×N attention matrix
-    const sMatrix = seqLen * seqLen * 2; // FP16
-    const qkvSize = 3 * seqLen * model.dhead * model.Hq * 2;
-    const standardIO = qkvSize + sMatrix * 2 + seqLen * model.dhead * model.Hq * 2; // rough
+// ============================================================
+// 2. STANDARD vs FLASH ATTENTION — Side-by-side IO flow
+// ============================================================
 
-    // Flash Attention: read Q,K,V from HBM (in tiles) + write O to HBM. NO S matrix in HBM.
-    const flashIO = qkvSize + seqLen * model.dhead * model.Hq * 2;
+function StandardVsFlash({ model, gpu }) {
+    const seqLen = 1024;
+    const d = model.dhead;
+
+    // Standard attention IO (simplified)
+    // Reads: Q, K, V from HBM (3 × N × d)
+    // Writes: S = Q×K^T to HBM (N × N)
+    // Reads: S from HBM
+    // Writes: P = softmax(S) to HBM (N × N)
+    // Reads: P, V from HBM
+    // Writes: O to HBM (N × d)
+    const standardReads = 3 * seqLen * d + seqLen * seqLen + seqLen * seqLen + seqLen * d;
+    const standardWrites = seqLen * seqLen + seqLen * seqLen + seqLen * d;
+    const standardTotal = standardReads + standardWrites;
+
+    // Flash attention: reads Q,K,V once, writes O once. No intermediate materialization.
+    const flashReads = 3 * seqLen * d;
+    const flashWrites = seqLen * d;
+    const flashTotal = flashReads + flashWrites;
+
+    const savings = ((1 - flashTotal / standardTotal) * 100).toFixed(0);
 
     return (
-        <div className="attn-compare-section">
-            <div className="attn-compare-toggle">
-                <button
-                    className={`attn-compare-btn ${activeView === 'standard' ? 'active' : ''}`}
-                    onClick={() => setActiveView('standard')}
-                >
-                    Standard Attention
-                </button>
-                <button
-                    className={`attn-compare-btn ${activeView === 'flash' ? 'active' : ''}`}
-                    onClick={() => setActiveView('flash')}
-                >
-                    Flash Attention
-                </button>
-            </div>
+        <section className="chapter-section">
+            <h3 className="section-title">Standard Attention vs Flash Attention — IO Comparison</h3>
+            <p className="section-desc">
+                The critical difference is how many times data travels between slow HBM and fast SRAM.
+                Standard attention writes and reads the full <strong>N×N attention matrix</strong> to/from HBM
+                multiple times. Flash Attention processes tiles entirely in SRAM, reading Q/K/V from HBM only
+                once and writing the output once. For a sequence of {seqLen} tokens:
+            </p>
 
-            <div className="attn-compare-content glass-card">
-                {activeView === 'standard' ? (
-                    <div className="attn-view animate-in">
-                        <h4>Standard Attention — The IO Problem</h4>
-                        <div className="attn-flow">
-                            <div className="attn-flow-step">
-                                <div className="attn-flow-box hbm">HBM</div>
-                                <div className="attn-flow-arrow">→ read Q, K, V</div>
-                                <div className="attn-flow-box sram">SRAM</div>
-                            </div>
-                            <div className="attn-flow-step">
-                                <div className="attn-flow-box sram">compute S = Q×K<sup>T</sup></div>
-                            </div>
-                            <div className="attn-flow-step warning">
-                                <div className="attn-flow-box sram">S matrix</div>
-                                <div className="attn-flow-arrow warn-arrow">→ write to HBM!</div>
-                                <div className="attn-flow-box hbm">HBM</div>
-                            </div>
-                            <div className="attn-flow-step warning">
-                                <div className="attn-flow-box hbm">HBM</div>
-                                <div className="attn-flow-arrow warn-arrow">→ read back S</div>
-                                <div className="attn-flow-box sram">softmax(S)</div>
-                            </div>
-                            <div className="attn-flow-step warning">
-                                <div className="attn-flow-box sram">softmax result</div>
-                                <div className="attn-flow-arrow warn-arrow">→ write to HBM!</div>
-                                <div className="attn-flow-box hbm">HBM</div>
-                            </div>
-                            <div className="attn-flow-step">
-                                <div className="attn-flow-box sram">O = P × V</div>
-                                <div className="attn-flow-arrow">→ write O</div>
-                                <div className="attn-flow-box hbm">HBM</div>
-                            </div>
+            <div className="attn-compare glass-card">
+                <div className="attn-compare-grid">
+                    {/* Standard */}
+                    <div className="attn-flow-col">
+                        <div className="attn-flow-title">
+                            🐌 Standard Attention
                         </div>
-                        <div className="attn-io-counter">
-                            <span className="io-label">Total HBM IO:</span>
-                            <span className="io-value mono warn-text">{formatBytes(standardIO)}</span>
-                            <span className="io-problem">S matrix ({seqLen}×{seqLen} = {formatBytes(sMatrix)}) causes 2 extra round trips</span>
+                        <div className="attn-flow-subtitle">
+                            Materializes the full N×N attention matrix in HBM. Multiple round-trips between HBM and compute.
                         </div>
-                    </div>
-                ) : (
-                    <div className="attn-view animate-in">
-                        <h4>Flash Attention — Tiled, No Extra IO</h4>
-                        <div className="attn-flow">
-                            <div className="attn-flow-step">
-                                <div className="attn-flow-box hbm">HBM</div>
-                                <div className="attn-flow-arrow">→ read Q tile ({blockSize}×{model.dhead})</div>
-                                <div className="attn-flow-box sram">SRAM</div>
-                            </div>
-                            <div className="attn-flow-step">
-                                <div className="attn-flow-box hbm">HBM</div>
-                                <div className="attn-flow-arrow">→ read K,V tile ({blockSize}×{model.dhead})</div>
-                                <div className="attn-flow-box sram">SRAM</div>
-                            </div>
-                            <div className="attn-flow-step success-step">
-                                <div className="attn-flow-box sram wide">
-                                    Compute S_tile = Q_tile × K_tile<sup>T</sup><br />
-                                    <strong>softmax + multiply V — all in SRAM! ✓</strong>
+                        <div className="flow-steps">
+                            <div className="flow-step">
+                                <div className="flow-step-num">1</div>
+                                <div className="flow-step-content">
+                                    <div className="flow-step-action">Load Q, K from HBM</div>
+                                    <div className="flow-step-io read">↑ READ {seqLen}×{d} × 2</div>
                                 </div>
                             </div>
-                            <div className="attn-flow-step">
-                                <div className="attn-flow-box sram">Accumulate O_tile</div>
-                                <div className="attn-flow-arrow">→ next tile ↗</div>
+                            <div className="flow-step">
+                                <div className="flow-step-num">2</div>
+                                <div className="flow-step-content">
+                                    <div className="flow-step-action">Compute S = Q × Kᵀ</div>
+                                    <div className="flow-step-io write">↓ WRITE {seqLen}×{seqLen} to HBM</div>
+                                    <div className="flow-step-detail">Full N×N matrix materialized!</div>
+                                </div>
                             </div>
-                            <div className="attn-flow-step">
-                                <div className="attn-flow-box sram">Final O</div>
-                                <div className="attn-flow-arrow">→ write once</div>
-                                <div className="attn-flow-box hbm">HBM</div>
+                            <div className="flow-step">
+                                <div className="flow-step-num">3</div>
+                                <div className="flow-step-content">
+                                    <div className="flow-step-action">Read S, compute softmax(S)</div>
+                                    <div className="flow-step-io read">↑ READ {seqLen}×{seqLen}</div>
+                                    <div className="flow-step-io write">↓ WRITE {seqLen}×{seqLen}</div>
+                                </div>
+                            </div>
+                            <div className="flow-step">
+                                <div className="flow-step-num">4</div>
+                                <div className="flow-step-content">
+                                    <div className="flow-step-action">Read P, V → compute O = P × V</div>
+                                    <div className="flow-step-io read">↑ READ {seqLen}×{seqLen} + {seqLen}×{d}</div>
+                                    <div className="flow-step-io write">↓ WRITE {seqLen}×{d}</div>
+                                </div>
                             </div>
                         </div>
-                        <div className="attn-io-counter success-counter">
-                            <span className="io-label">Total HBM IO:</span>
-                            <span className="io-value mono success-text">{formatBytes(flashIO)}</span>
-                            <span className="io-saved">S matrix NEVER leaves SRAM — saved {formatBytes(standardIO - flashIO)} of IO</span>
+                        <div className="io-counter standard-io">
+                            <div className="io-counter-value">{(standardTotal / 1e6).toFixed(1)}M</div>
+                            <div className="io-counter-label">total values transferred to/from HBM</div>
                         </div>
                     </div>
-                )}
-            </div>
 
-            {/* Tile size info */}
-            <div className="tile-info glass-card">
-                <h4>Tile Size for {gpu.name}</h4>
-                <div className="tile-stats">
-                    <div className="tile-stat">
-                        <span className="tile-stat-label">SRAM available</span>
-                        <span className="tile-stat-value mono">{gpu.sram_mb} MB</span>
-                    </div>
-                    <div className="tile-stat">
-                        <span className="tile-stat-label">Block size</span>
-                        <span className="tile-stat-value mono">{blockSize} × {blockSize}</span>
-                    </div>
-                    <div className="tile-stat">
-                        <span className="tile-stat-label">Tiles needed (N={seqLen})</span>
-                        <span className="tile-stat-value mono">{Math.ceil(seqLen / blockSize)}²</span>
-                    </div>
-                    <div className="tile-stat">
-                        <span className="tile-stat-label">d_head</span>
-                        <span className="tile-stat-value mono">{model.dhead}</span>
+                    {/* Flash */}
+                    <div className="attn-flow-col flash-col">
+                        <div className="attn-flow-title">
+                            ⚡ Flash Attention
+                        </div>
+                        <div className="attn-flow-subtitle">
+                            Tiles Q×K^T into SRAM-sized blocks. Never materializes the full N×N matrix.
+                        </div>
+                        <div className="flow-steps">
+                            <div className="flow-step">
+                                <div className="flow-step-num">1</div>
+                                <div className="flow-step-content">
+                                    <div className="flow-step-action">Load Q, K, V tiles from HBM</div>
+                                    <div className="flow-step-io read">↑ READ 3×{seqLen}×{d} (once)</div>
+                                </div>
+                            </div>
+                            <div className="flow-step">
+                                <div className="flow-step-num">2</div>
+                                <div className="flow-step-content">
+                                    <div className="flow-step-action">Compute tile of S, softmax, × V in SRAM</div>
+                                    <div className="flow-step-io sram-op">⚡ ALL in SRAM — no HBM write</div>
+                                    <div className="flow-step-detail">Uses online softmax to update running result</div>
+                                </div>
+                            </div>
+                            <div className="flow-step">
+                                <div className="flow-step-num">3</div>
+                                <div className="flow-step-content">
+                                    <div className="flow-step-action">Write final output O to HBM</div>
+                                    <div className="flow-step-io write">↓ WRITE {seqLen}×{d} (once)</div>
+                                </div>
+                            </div>
+                            <div className="flow-step">
+                                <div className="flow-step-num">✓</div>
+                                <div className="flow-step-content">
+                                    <div className="flow-step-action">No intermediate N×N matrix ever stored</div>
+                                    <div className="flow-step-detail">The attention matrix is computed tile-by-tile and immediately consumed</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="io-counter flash-io">
+                            <div className="io-counter-value">{(flashTotal / 1e6).toFixed(1)}M</div>
+                            <div className="io-counter-label">total values transferred — {savings}% less IO</div>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
     );
 }
 
 
-// --- Main Chapter 3 ---
+// ============================================================
+// 3. TILE SIZE CALCULATOR
+//    Shows how big each tile can be given SRAM budget
+// ============================================================
+
+function TileCalculator({ model, gpu }) {
+    const blockSize = tileSize(gpu, model);
+    const sramBytes = gpu.sram_mb * 1024 * 1024;
+    const d = model.dhead;
+
+    // What fits in one tile
+    const tileQMem = blockSize * d * 2; // Q tile
+    const tileKMem = blockSize * d * 2; // K tile
+    const tileVMem = blockSize * d * 2; // V tile
+    const tileSMem = blockSize * blockSize * 2; // S tile (attention scores)
+    const tileOMem = blockSize * d * 2; // O tile
+    const totalTileMem = tileQMem + tileKMem + tileVMem + tileSMem + tileOMem;
+
+    // Number of tiles needed to cover full sequence
+    const seqLen = 1024;
+    const numTiles = Math.ceil(seqLen / blockSize);
+
+    // Mini visual: grid showing tiles
+    const tileGridSize = Math.min(blockSize, 12);
+
+    return (
+        <section className="chapter-section">
+            <h3 className="section-title">How Big Can Each Tile Be?</h3>
+            <p className="section-desc">
+                The tile size is determined by how much SRAM is available. Each tile must fit:
+                a block of Q, a block of K, a block of V, the local attention scores (S), and the
+                output block (O) — all simultaneously in SRAM. A bigger tile means fewer round-trips
+                to HBM but requires more SRAM.
+            </p>
+
+            <div className="tile-calc glass-card">
+                <div className="tile-calc-grid">
+                    <div className="tile-params">
+                        <div className="tile-param-row">
+                            <span className="tile-param-label">GPU</span>
+                            <span className="tile-param-value">{gpu.name}</span>
+                        </div>
+                        <div className="tile-param-row">
+                            <span className="tile-param-label">Available SRAM</span>
+                            <span className="tile-param-value">{gpu.sram_mb} MB ({formatBytes(sramBytes)})</span>
+                        </div>
+                        <div className="tile-param-row">
+                            <span className="tile-param-label">Head dimension (d)</span>
+                            <span className="tile-param-value">{d}</span>
+                        </div>
+                        <div className="tile-param-row" style={{ borderLeft: '3px solid var(--accent-warm)', paddingLeft: 'var(--space-sm)' }}>
+                            <span className="tile-param-label">Q tile</span>
+                            <span className="tile-param-value">[{blockSize}×{d}] = {formatBytes(tileQMem)}</span>
+                        </div>
+                        <div className="tile-param-row" style={{ borderLeft: '3px solid var(--text-accent)', paddingLeft: 'var(--space-sm)' }}>
+                            <span className="tile-param-label">K tile</span>
+                            <span className="tile-param-value">[{blockSize}×{d}] = {formatBytes(tileKMem)}</span>
+                        </div>
+                        <div className="tile-param-row" style={{ borderLeft: '3px solid var(--accent-secondary)', paddingLeft: 'var(--space-sm)' }}>
+                            <span className="tile-param-label">V tile</span>
+                            <span className="tile-param-value">[{blockSize}×{d}] = {formatBytes(tileVMem)}</span>
+                        </div>
+                        <div className="tile-param-row" style={{ borderLeft: '3px solid var(--accent-gold)', paddingLeft: 'var(--space-sm)' }}>
+                            <span className="tile-param-label">S tile (scores)</span>
+                            <span className="tile-param-value">[{blockSize}×{blockSize}] = {formatBytes(tileSMem)}</span>
+                        </div>
+                        <div className="tile-param-row">
+                            <span className="tile-param-label">Total per tile</span>
+                            <span className="tile-param-value">{formatBytes(totalTileMem)}</span>
+                        </div>
+                        <div className="tile-param-row">
+                            <span className="tile-param-label">Tiles for 1K seq</span>
+                            <span className="tile-param-value">{numTiles} × {numTiles} = {numTiles * numTiles} tile pairs</span>
+                        </div>
+                    </div>
+
+                    <div className="tile-result">
+                        <div className="tile-result-value">{blockSize}</div>
+                        <div className="tile-result-label">
+                            tokens per tile
+                            <br />
+                            <strong>{model.name} on {gpu.name}</strong>
+                        </div>
+                        {/* Mini tile grid */}
+                        <div className="tile-visual" style={{ gridTemplateColumns: `repeat(${Math.min(numTiles, 16)}, 1fr)` }}>
+                            {Array.from({ length: Math.min(numTiles * numTiles, 256) }, (_, i) => (
+                                <div
+                                    key={i}
+                                    className={`tile-cell ${i % (numTiles + 1) === 0 ? 'active' : ''}`}
+                                    title={`Tile [${Math.floor(i / numTiles)}, ${i % numTiles}]`}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+
+// ============================================================
+// 4. ONLINE SOFTMAX — The Mathematical Trick
+// ============================================================
+
+function OnlineSoftmax() {
+    return (
+        <section className="chapter-section">
+            <h3 className="section-title">The Online Softmax Trick — Computing Softmax Without Seeing All Values</h3>
+            <p className="section-desc">
+                The standard softmax requires seeing <em>all</em> scores before normalizing (you need the
+                global max for numerical stability and the global sum for the denominator). This seems to
+                require materializing the full N×N attention matrix. Flash Attention solves this with
+                <strong> online softmax</strong> — a clever way to update the softmax incrementally as each
+                tile is processed.
+            </p>
+
+            <div className="softmax-section glass-card">
+                <div className="softmax-comparison">
+                    <div className="softmax-card">
+                        <div className="softmax-card-title">Standard Softmax (2-pass)</div>
+                        <div className="softmax-formula">
+                            softmax(x<sub>i</sub>) = e<sup>x<sub>i</sub> - max(x)</sup> / Σ e<sup>x<sub>j</sub> - max(x)</sup>
+                        </div>
+                        <div className="softmax-steps">
+                            <ol>
+                                <li><strong>Pass 1:</strong> Scan all scores to find the global <code>max</code></li>
+                                <li><strong>Pass 2:</strong> Compute <code>e^(x-max)</code> for each and sum them</li>
+                                <li><strong>Pass 3:</strong> Divide each by the sum to normalize</li>
+                                <li><strong>Problem:</strong> Requires the entire N×N score matrix in memory</li>
+                            </ol>
+                        </div>
+                    </div>
+
+                    <div className="softmax-card" style={{ borderColor: 'rgba(78, 205, 196, 0.25)' }}>
+                        <div className="softmax-card-title">Online Softmax (1-pass, tiled)</div>
+                        <div className="softmax-formula">
+                            m' = max(m, max(x<sub>tile</sub>)), d' = d × e<sup>m-m'</sup> + Σ e<sup>x-m'</sup>
+                        </div>
+                        <div className="softmax-steps">
+                            <ol>
+                                <li><strong>Initialize:</strong> running max <code>m = -∞</code>, running sum <code>d = 0</code></li>
+                                <li><strong>Per tile:</strong> Update running max and rescale previous partial results</li>
+                                <li><strong>Accumulate:</strong> Add tile's contribution to running output <code>O</code></li>
+                                <li><strong>Key insight:</strong> When m changes, rescale everything by <code>e<sup>m_old - m_new</sup></code></li>
+                            </ol>
+                            <p style={{ marginTop: 'var(--space-sm)', color: 'var(--accent-secondary)', fontWeight: 'var(--fw-semibold)' }}>
+                                ✅ Never needs the full N×N matrix — only one tile at a time!
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+
+// ============================================================
+// 5. THE PARADOX — More FLOPS, less time
+// ============================================================
+
+function FlashParadox() {
+    return (
+        <section className="chapter-section">
+            <div className="paradox-box glass-card">
+                <div className="paradox-title">The Flash Attention Paradox</div>
+                <div className="paradox-desc">
+                    Flash Attention actually does <strong>more floating-point operations</strong> than standard
+                    attention (due to the rescaling in online softmax). But it's <strong>2-4× faster</strong>
+                    because it eliminates the massive HBM reads and writes of the N×N attention matrix.
+                    <br /><br />
+                    This is the GPU performance paradox: <strong>memory bandwidth, not compute, is the bottleneck</strong>.
+                    Doing extra math in fast SRAM is far cheaper than moving data through slow HBM. This is
+                    the same insight from the Prologue — LLM inference is fundamentally memory-bound.
+                </div>
+            </div>
+        </section>
+    );
+}
+
+
+// ============================================================
+// CHAPTER 3 — Main Component
+// ============================================================
+
 export default function Chapter3({ selectedModel, selectedGPU }) {
     const model = MODELS[selectedModel];
     const gpu = GPUS[selectedGPU];
@@ -183,105 +407,65 @@ export default function Chapter3({ selectedModel, selectedGPU }) {
     return (
         <div className="chapter chapter3 animate-in">
             <div className="chapter-header">
-                <h2 className="chapter-title">How do we make memory reads faster?</h2>
+                <h2 className="chapter-title">Flash Attention — Making the Math Fit in Fast Memory</h2>
                 <p className="chapter-hook">
-                    Even after shrinking the KV cache, standard attention writes intermediate results to slow HBM memory.
-                    Flash Attention rearranges the computation so everything stays in fast SRAM.
+                    Chapter 2 showed how to shrink the KV cache — fewer heads, paged allocation, compression.
+                    But even with a smaller cache, the attention computation itself is expensive. The full
+                    N×N attention matrix can be enormous, and standard implementations waste time moving it
+                    between slow GPU memory and fast compute cores. Flash Attention solves this by keeping
+                    everything in the GPU's tiny but lightning-fast on-chip SRAM.
                 </p>
             </div>
 
-            {/* Section 1: The Memory Hierarchy */}
+            {/* Section 1: Memory Hierarchy */}
+            <MemoryHierarchy gpu={gpu} />
+
+            {/* Bridge */}
             <section className="chapter-section">
-                <ExplanationPanel title="Not all memory is created equal" variant="what">
-                    <p>
-                        GPUs have a <strong>memory hierarchy</strong>. At the top: tiny, blazing-fast SRAM (on-chip cache).
-                        At the bottom: large, slow HBM (High Bandwidth Memory). The speed difference is massive —
-                        SRAM is roughly <strong>10–100× faster</strong> than HBM.
-                    </p>
-                    <p>
-                        Standard attention computes the full {model.Hq}-head attention matrix and writes it to HBM
-                        before computing softmax. For a 2048-token sequence, that's a {2048}×{2048} matrix per head —
-                        written to slow memory and read back. This IO overhead dominates the computation.
-                    </p>
-                </ExplanationPanel>
-                <MemoryHierarchy gpu={gpu} />
+                <p className="section-desc" style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center', fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                    SRAM is 50-100× faster than HBM but 1000× smaller. The challenge is: how do we fit
+                    an N×N attention computation into a few megabytes of SRAM? Answer: process it in tiles.
+                </p>
             </section>
 
             {/* Section 2: Standard vs Flash */}
+            <StandardVsFlash model={model} gpu={gpu} />
+
+            {/* Bridge */}
             <section className="chapter-section">
-                <ExplanationPanel title="Flash Attention: Keep everything in SRAM" variant="what">
-                    <p>
-                        <strong>Flash Attention</strong> (Tri Dao, 2022) restructures the attention computation to work
-                        in <em>tiles</em> (blocks of rows). Instead of computing the full N×N attention matrix, it
-                        processes small tiles that fit entirely in SRAM:
-                    </p>
-                    <p>
-                        1. Load a block of Q, K, V into SRAM<br />
-                        2. Compute the attention scores <em>and</em> multiply by V — all in SRAM<br />
-                        3. Accumulate the output, move to the next tile<br />
-                        4. The attention matrix S <strong>never touches HBM</strong>
-                    </p>
-                </ExplanationPanel>
-                <AttentionComparison model={model} gpu={gpu} />
+                <p className="section-desc" style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center', fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                    But how big can each tile be? That depends on the GPU's SRAM budget and the model's head dimension.
+                </p>
             </section>
 
-            {/* Go Deeper: Online Softmax */}
-            <GoDeeper title="Go Deeper — Online Softmax: The Mathematical Trick">
-                <ExplanationPanel title="Why tiling attention is harder than it looks" variant="math">
-                    <p>
-                        The reason you can't naively tile softmax: softmax needs the <strong>maximum value</strong> and
-                        the <strong>sum of exponentials</strong> across the entire row. If you only see part of the row,
-                        you don't know these values.
-                    </p>
-                    <p>
-                        <strong>Online softmax</strong> solves this by maintaining a running maximum and a running sum
-                        as you process tiles left to right:
-                    </p>
-                    <p>
-                        <code>m_new = max(m_old, max(S_tile))</code><br />
-                        <code>l_new = l_old × exp(m_old − m_new) + sum(exp(S_tile − m_new))</code><br />
-                        <code>O_new = O_old × (l_old / l_new) × exp(m_old − m_new) + P_tile × V_tile / l_new</code>
-                    </p>
-                    <p>
-                        The correction factor <code>exp(m_old − m_new)</code> adjusts all previous results when a new
-                        maximum is discovered. Once you've seen all tiles, the output is <strong>numerically identical</strong> to
-                        standard softmax — just computed without ever writing the full S matrix.
-                    </p>
-                </ExplanationPanel>
-            </GoDeeper>
+            {/* Section 3: Tile Calculator */}
+            <TileCalculator model={model} gpu={gpu} />
 
-            {/* Section 3: The Paradox */}
+            {/* Bridge */}
             <section className="chapter-section">
-                <ExplanationPanel title="More FLOPs, less time" variant="why">
-                    <p>
-                        Flash Attention actually does <strong>more arithmetic</strong> than standard attention — the
-                        online softmax rescaling adds extra multiplications. But it does <strong>far fewer memory operations</strong>.
-                    </p>
-                    <p>
-                        Since GPU compute is 10–100× faster than memory bandwidth, trading extra FLOPs for fewer HBM reads
-                        is a huge win. Flash Attention achieves <strong>2–4× wall-clock speedup</strong> and uses
-                        <strong>5–20× less memory</strong> (no N×N matrix stored).
-                    </p>
-                    <p>
-                        This is the same insight as the Prologue: <strong>inference is memory-bound</strong>.
-                        Any optimization that reduces memory traffic — even at the cost of more arithmetic — wins.
-                    </p>
-                </ExplanationPanel>
+                <p className="section-desc" style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center', fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                    Processing tiles is straightforward for the matrix multiply — but softmax normally needs
+                    all values at once. How does Flash Attention handle that?
+                </p>
             </section>
+
+            {/* Section 4: Online Softmax */}
+            <OnlineSoftmax />
+
+            {/* Section 5: The Paradox */}
+            <FlashParadox />
 
             {/* Hook to Chapter 4 */}
             <section className="chapter-section">
                 <div className="chapter-next-hook glass-card">
                     <p>
-                        Flash Attention optimized <em>how</em> we read attention data. But the largest memory consumer
-                        hasn't been touched: <strong>the model weights themselves</strong>.
-                        {' '}{model.name} at FP16 is {formatBytes(model.params * 2)} — and Llama-2-7B is 14 GB.
-                    </p>
-                    <p>
-                        What if we could represent those weights with fewer bits?
+                        Flash Attention optimizes how attention is <em>computed</em> — keeping data in fast SRAM.
+                        But the model weights themselves are still stored in full precision, consuming
+                        {' '}{formatBytes(model.params * 2)} for {model.name} in FP16.
+                        Can we store the weights in even lower precision to fit larger models on smaller GPUs?
                     </p>
                     <p className="chapter-next-question">
-                        → How do we shrink the model itself?
+                        → Quantization: Trading precision for memory
                     </p>
                 </div>
             </section>

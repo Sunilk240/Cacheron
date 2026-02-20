@@ -1,270 +1,636 @@
-import { useState, useMemo } from 'react';
-import { MODELS, GPUS, kvCacheSize, modelWeightSize, formatBytes, kvPerToken, kvPerTokenPerLayer } from '../data/modelConfig';
-import ExplanationPanel from '../components/ExplanationPanel';
-import MemoryBar from '../components/MemoryBar';
-import GoDeeper from '../components/GoDeeper';
-import ShapeBadge from '../components/ShapeBadge';
+import { useState, useEffect, useRef } from 'react';
+import { MODELS, GPUS, kvCacheSize, modelWeightSize, formatBytes } from '../data/modelConfig';
 import './Chapter1.css';
 
-// --- Q, K, V Explainer ---
-function QKVExplainer({ model }) {
-    const [hoveredVec, setHoveredVec] = useState(null);
+// ============================================================
+// 1. QKV PROJECTION FLOW
+//    Token → Embedding → multiply by W_Q, W_K, W_V → Q, K, V
+//    K and V go to cache, Q goes to attention
+// ============================================================
 
-    const vectors = [
-        {
-            id: 'q', label: 'Query (Q)', color: 'accent',
-            desc: 'What am I looking for?',
-            detail: `Each token produces a Query vector. It represents "what this token wants to attend to." Computed fresh for every token at every layer.`,
-            shape: `[${model.Hq}, ${model.dhead}]`,
-            cached: false,
-        },
-        {
-            id: 'k', label: 'Key (K)', color: 'success',
-            desc: 'What do I contain?',
-            detail: `Each token produces a Key vector. It represents "what this token has to offer." Keys from all past tokens must be stored because future tokens need to compare against them.`,
-            shape: `[${model.Hkv}, ${model.dhead}]`,
-            cached: true,
-        },
-        {
-            id: 'v', label: 'Value (V)', color: 'warm',
-            desc: 'What information do I carry?',
-            detail: `Each token produces a Value vector. Once attention scores are computed (Q × K), the Values are weighted and summed to produce the output. Like Keys, all past Values must be stored.`,
-            shape: `[${model.Hkv}, ${model.dhead}]`,
-            cached: true,
-        },
-    ];
+function QKVProjectionFlow({ model }) {
+    const [selectedToken, setSelectedToken] = useState('Paris');
+    const tokens = ['The', 'capital', 'of', 'France', 'is', 'Paris'];
+
+    const qDim = `${model.Hq}×${model.dhead}`;
+    const kvDim = `${model.Hkv}×${model.dhead}`;
+    const qTotal = model.Hq * model.dhead;
+    const kvTotal = model.Hkv * model.dhead;
 
     return (
-        <div className="qkv-explainer">
-            <div className="qkv-cards">
-                {vectors.map(v => (
-                    <div
-                        key={v.id}
-                        className={`qkv-card glass-card ${v.color} ${hoveredVec === v.id ? 'hovered' : ''}`}
-                        onMouseEnter={() => setHoveredVec(v.id)}
-                        onMouseLeave={() => setHoveredVec(null)}
-                    >
-                        <div className="qkv-card-header">
-                            <span className="qkv-letter">{v.id.toUpperCase()}</span>
-                            <span className="qkv-label">{v.label}</span>
-                            {v.cached && <span className="qkv-cached-badge">📦 Cached</span>}
+        <section className="chapter-section">
+            <h3 className="section-title">How Does a Token Become Q, K, and V?</h3>
+            <p className="section-desc">
+                Inside each transformer layer, every token goes through the same transformation. The token's
+                embedding vector (a list of {model.dmodel} numbers) gets multiplied by three separate
+                weight matrices — <strong style={{ color: 'var(--accent-warm)' }}>W<sub>Q</sub></strong>,{' '}
+                <strong style={{ color: 'var(--text-accent)' }}>W<sub>K</sub></strong>, and{' '}
+                <strong style={{ color: 'var(--accent-secondary)' }}>W<sub>V</sub></strong> — to produce
+                three different vectors:
+            </p>
+            <ul className="section-desc" style={{ paddingLeft: '1.5em', marginTop: '-8px' }}>
+                <li><strong style={{ color: 'var(--accent-warm)' }}>Query (Q)</strong>: "What am I looking for?"</li>
+                <li><strong style={{ color: 'var(--text-accent)' }}>Key (K)</strong>: "What do I contain?"</li>
+                <li><strong style={{ color: 'var(--accent-secondary)' }}>Value (V)</strong>: "What information do I carry?"</li>
+            </ul>
+            <p className="section-desc" style={{ marginTop: '4px' }}>
+                Click any token below to see its journey through the three projections.
+            </p>
+
+            <div className="qkv-flow glass-card">
+                {/* Token selector */}
+                <div className="qkv-input-row" style={{ justifyContent: 'center', marginBottom: 'var(--space-md)' }}>
+                    {tokens.map(tok => (
+                        <span
+                            key={tok}
+                            className={`kv-tok ${selectedToken === tok ? 'current' : 'processed'}`}
+                            onClick={() => setSelectedToken(tok)}
+                            style={{ cursor: 'pointer' }}
+                        >
+                            {tok}
+                        </span>
+                    ))}
+                </div>
+
+                <div className="qkv-flow-diagram">
+                    {/* Token → Embedding */}
+                    <div className="qkv-input-row">
+                        <div className="qkv-token-box">"{selectedToken}"</div>
+                        <div className="qkv-embed-arrow">→ embed →</div>
+                        <div className="qkv-embed-box">
+                            <div className="qkv-embed-label">Embedding vector</div>
+                            <div className="qkv-embed-dim">[1 × {model.dmodel}]</div>
                         </div>
-                        <p className="qkv-question">{v.desc}</p>
-                        <ShapeBadge shape={v.shape} label="per token" color={v.color} />
-                        {hoveredVec === v.id && (
-                            <p className="qkv-detail animate-in">{v.detail}</p>
-                        )}
                     </div>
-                ))}
+
+                    {/* Split arrow */}
+                    <div className="qkv-arrows-down">↓ multiplied by 3 weight matrices ↓</div>
+
+                    {/* Three branches: Q, K, V */}
+                    <div className="qkv-projection">
+                        {/* Q branch */}
+                        <div className="qkv-branch">
+                            <div className="qkv-weight-box q-weight">
+                                <span className="qkv-weight-name">W<sub>Q</sub></span>
+                                <span className="qkv-weight-dim">[{model.dmodel} × {qTotal}]</span>
+                            </div>
+                            <div className="qkv-times">×</div>
+                            <div className="qkv-result-box q-result">
+                                Q
+                                <span className="qkv-result-dim">[1 × {qTotal}]  ({qDim})</span>
+                            </div>
+                            <div className="qkv-cache-badge not-cached">
+                                ✕ Not cached — recomputed each step
+                            </div>
+                        </div>
+
+                        {/* K branch */}
+                        <div className="qkv-branch">
+                            <div className="qkv-weight-box k-weight">
+                                <span className="qkv-weight-name">W<sub>K</sub></span>
+                                <span className="qkv-weight-dim">[{model.dmodel} × {kvTotal}]</span>
+                            </div>
+                            <div className="qkv-times">×</div>
+                            <div className="qkv-result-box k-result">
+                                K
+                                <span className="qkv-result-dim">[1 × {kvTotal}]  ({kvDim})</span>
+                            </div>
+                            <div className="qkv-cache-badge cached">
+                                📦 Stored in KV cache
+                            </div>
+                        </div>
+
+                        {/* V branch */}
+                        <div className="qkv-branch">
+                            <div className="qkv-weight-box v-weight">
+                                <span className="qkv-weight-name">W<sub>V</sub></span>
+                                <span className="qkv-weight-dim">[{model.dmodel} × {kvTotal}]</span>
+                            </div>
+                            <div className="qkv-times">×</div>
+                            <div className="qkv-result-box v-result">
+                                V
+                                <span className="qkv-result-dim">[1 × {kvTotal}]  ({kvDim})</span>
+                            </div>
+                            <div className="qkv-cache-badge cached">
+                                📦 Stored in KV cache
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div className="qkv-formula-row">
-                <span className="qkv-formula mono">
-                    Attention(Q, K, V) = softmax(Q × K<sup>T</sup> / √d<sub>head</sub>) × V
-                </span>
-            </div>
-        </div>
+        </section>
     );
 }
 
-// --- Attention Head Grid ---
-function HeadGrid({ model }) {
-    const gqaRatio = model.Hq / model.Hkv;
+
+// ============================================================
+// 2. ATTENTION SCORE COMPUTATION
+//    Q × K^T → scores → softmax → weights → × V → output
+//    Animated step-by-step matrix multiply
+// ============================================================
+
+function AttentionScoreFlow({ model }) {
+    const [activeStep, setActiveStep] = useState(0);
+    const steps = [
+        { label: 'Q × Kᵀ', desc: 'Compute raw attention scores: how much does each token attend to every other token.' },
+        { label: '÷ √d', desc: `Scale by √${model.dhead} = ${Math.sqrt(model.dhead).toFixed(1)} to prevent values from becoming too large.` },
+        { label: 'Softmax', desc: 'Normalize scores into probabilities that sum to 1 across each row.' },
+        { label: '× V', desc: 'Weighted sum of Value vectors — tokens with high attention scores contribute more.' },
+    ];
+
+    // Mini example attention scores (4 tokens)
+    const tokens = ['The', 'cat', 'sat', 'down'];
+    const rawScores = [
+        [1.2, 0.3, 0.1, 0.0],
+        [0.5, 2.1, 0.2, 0.1],
+        [0.3, 0.8, 1.9, 0.3],
+        [0.2, 0.4, 0.6, 2.0],
+    ];
+
+    const scale = Math.sqrt(model.dhead);
+    const scaledScores = rawScores.map(row => row.map(v => v / scale));
+
+    // Softmax per row
+    const softmaxScores = scaledScores.map(row => {
+        const maxVal = Math.max(...row);
+        const exps = row.map(v => Math.exp(v - maxVal));
+        const sum = exps.reduce((a, b) => a + b, 0);
+        return exps.map(e => e / sum);
+    });
+
+    const getDisplayScores = () => {
+        if (activeStep === 0) return rawScores;
+        if (activeStep === 1) return scaledScores;
+        return softmaxScores;
+    };
+
+    const getColor = (val, step) => {
+        if (step <= 1) {
+            // Raw/scaled: blue gradient
+            const norm = Math.min(val / 2.5, 1);
+            return `rgba(124, 106, 255, ${0.15 + norm * 0.6})`;
+        }
+        // Softmax: green gradient
+        const norm = Math.min(val / 0.6, 1);
+        return `rgba(78, 205, 196, ${0.1 + norm * 0.65})`;
+    };
 
     return (
-        <div className="head-grid-container glass-card">
-            <div className="head-grid-header">
-                <h4>Attention Heads — {model.name}</h4>
-                <div className="head-grid-legend">
-                    <span className="legend-item"><span className="legend-dot q-dot" /> Q heads ({model.Hq})</span>
-                    <span className="legend-item"><span className="legend-dot kv-dot" /> KV heads ({model.Hkv})</span>
-                    <span className="legend-item ratio">Ratio: {gqaRatio}:1</span>
-                </div>
-            </div>
+        <section className="chapter-section">
+            <h3 className="section-title">How Attention Is Actually Computed</h3>
+            <p className="section-desc">
+                Now that each token has a Q, K, and V vector, how does the model decide which tokens to pay
+                attention to? It uses the <strong>Scaled Dot-Product Attention</strong> formula. This is the
+                heart of the transformer — and it happens independently in each attention head, at every layer.
+            </p>
+            <p className="section-desc" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-accent)', background: 'var(--bg-tertiary)', padding: '8px 12px', borderRadius: 'var(--radius-sm)', display: 'inline-block' }}>
+                Attention(Q, K, V) = softmax(Q × Kᵀ / √d<sub>head</sub>) × V
+            </p>
+            <p className="section-desc">
+                Click through each step below to see how 4 tokens compute their attention scores:
+            </p>
 
-            <div className="head-grid-visual">
-                {/* KV head groups */}
-                {Array.from({ length: model.Hkv }, (_, kvIdx) => (
-                    <div key={kvIdx} className="head-group">
-                        <div className="head-group-q-row">
-                            {Array.from({ length: gqaRatio }, (_, qIdx) => (
-                                <div key={qIdx} className="head-cell q-head" title={`Q head ${kvIdx * gqaRatio + qIdx}`}>
-                                    Q
+            <div className="attn-score-section glass-card">
+                {/* Step selector */}
+                <div style={{ display: 'flex', gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)', flexWrap: 'wrap' }}>
+                    {steps.map((step, i) => (
+                        <button
+                            key={i}
+                            className={`pd-toggle-btn ${activeStep === i ? 'active' : ''}`}
+                            onClick={() => setActiveStep(i)}
+                        >
+                            {i + 1}. {step.label}
+                        </button>
+                    ))}
+                </div>
+
+                <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--text-muted)', marginBottom: 'var(--space-md)', lineHeight: 1.5 }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>{steps[activeStep].label}:</strong>{' '}
+                    {steps[activeStep].desc}
+                </p>
+
+                {/* Attention heatmap */}
+                <div className="attn-heatmap">
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: 'var(--space-xs)', textAlign: 'center' }}>
+                        {activeStep <= 1 ? 'Raw scores (higher = more attention)' : activeStep === 2 ? 'After softmax (rows sum to 1)' : 'Final attention weights applied to V'}
+                    </div>
+                    <div className="attn-heatmap-grid">
+                        {/* Column headers */}
+                        <div className="attn-heatmap-row">
+                            <div className="attn-heatmap-header" />
+                            {tokens.map(tok => (
+                                <div key={tok} className="attn-heatmap-header" style={{ minWidth: '44px', textAlign: 'center', color: 'var(--text-accent)' }}>
+                                    {tok}
                                 </div>
                             ))}
                         </div>
-                        <div className="head-group-arrow">↓ share</div>
-                        <div className="head-cell kv-head" title={`KV head ${kvIdx}`}>
-                            K,V
-                        </div>
+                        {/* Score rows */}
+                        {getDisplayScores().map((row, i) => (
+                            <div key={i} className="attn-heatmap-row">
+                                <div className="attn-heatmap-header" style={{ color: 'var(--accent-warm)' }}>{tokens[i]}</div>
+                                {row.map((val, j) => (
+                                    <div
+                                        key={j}
+                                        className={`attn-heat-cell ${i === j ? 'highlight' : ''}`}
+                                        style={{ background: getColor(val, activeStep) }}
+                                        title={`${tokens[i]} → ${tokens[j]}: ${val.toFixed(3)}`}
+                                    >
+                                        {activeStep >= 2 ? (val * 100).toFixed(0) + '%' : val.toFixed(2)}
+                                    </div>
+                                ))}
+                            </div>
+                        ))}
                     </div>
-                ))}
-            </div>
+                </div>
 
-            <div className="head-grid-insight">
-                {model.isMHA ? (
-                    <p>
-                        <strong>Pure MHA:</strong> Every Query head has its own Key and Value head.
-                        No sharing = maximum memory usage. KV cache stores{' '}
-                        <code>{model.Hkv} × {model.dhead} × 2 = {model.Hkv * model.dhead * 2}</code> values per token per layer.
-                    </p>
-                ) : (
-                    <p>
-                        <strong>GQA {gqaRatio}:1:</strong> Every {gqaRatio} Query heads share 1 KV head.
-                        Attention quality is preserved (queries still have full resolution), but KV cache is{' '}
-                        <strong>{gqaRatio}× smaller</strong> because only {model.Hkv} KV pairs are stored instead of {model.Hq}.
-                    </p>
+                {/* Step 3: show V multiplication concept */}
+                {activeStep === 3 && (
+                    <div style={{ marginTop: 'var(--space-md)', padding: 'var(--space-md)', background: 'rgba(78, 205, 196, 0.06)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(78, 205, 196, 0.15)' }}>
+                        <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                            <strong style={{ color: 'var(--accent-secondary)' }}>Final multiply by V:</strong>{' '}
+                            Each row of attention weights is used as a weighted combination of the V vectors.
+                            For example, "sat" gets{' '}
+                            <span style={{ color: 'var(--text-accent)', fontFamily: 'var(--font-mono)' }}>
+                                {(softmaxScores[2][0] * 100).toFixed(0)}%
+                            </span> of V<sub>The</sub> +{' '}
+                            <span style={{ color: 'var(--text-accent)', fontFamily: 'var(--font-mono)' }}>
+                                {(softmaxScores[2][1] * 100).toFixed(0)}%
+                            </span> of V<sub>cat</sub> +{' '}
+                            <span style={{ color: 'var(--text-accent)', fontFamily: 'var(--font-mono)' }}>
+                                {(softmaxScores[2][2] * 100).toFixed(0)}%
+                            </span> of V<sub>sat</sub> +{' '}
+                            <span style={{ color: 'var(--text-accent)', fontFamily: 'var(--font-mono)' }}>
+                                {(softmaxScores[2][3] * 100).toFixed(0)}%
+                            </span> of V<sub>down</sub>.
+                            <br /><br />
+                            This is how the model "mixes" information from different tokens — tokens with high attention scores
+                            contribute more of their value to the output.
+                        </p>
+                    </div>
                 )}
             </div>
-        </div>
+        </section>
     );
 }
 
-// --- KV Cache Growth Visualization ---
-function KVCacheGrowth({ model, gpu }) {
-    const [tokens, setTokens] = useState(512);
-    const budgetBytes = gpu.budget_mb * 1024 * 1024;
-    const weightBytes = modelWeightSize(model, 2);
-    const kv = kvCacheSize(model, tokens, 1, 2);
-    const total = weightBytes + kv;
 
-    const perToken = kvPerToken(model, null, 2);
-    const perTokenPerLayer = kvPerTokenPerLayer(model, null, 2);
+// ============================================================
+// 3. KV CACHE TOKEN-BY-TOKEN STEPPER
+//    Step through generating tokens, see KV cache grow:
+//    each token adds its K,V to cache, Q is discarded
+// ============================================================
 
-    // Find max tokens before OOM
-    const maxTokensBeforeOOM = useMemo(() => {
-        let t = 1;
-        while (t < 1000000) {
-            if (weightBytes + kvCacheSize(model, t, 1, 2) > budgetBytes) return t - 1;
-            t += 1;
-        }
-        return t;
-    }, [model, gpu, weightBytes, budgetBytes]);
+const SENTENCE = ["The", "capital", "of", "France", "is", "Paris", "."];
+
+function KVCacheStepper({ model }) {
+    const [step, setStep] = useState(0);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const timerRef = useRef(null);
+    const total = SENTENCE.length;
+
+    useEffect(() => {
+        if (!isPlaying) return;
+        timerRef.current = setInterval(() => {
+            setStep(s => {
+                if (s >= total) { setIsPlaying(false); return s; }
+                return s + 1;
+            });
+        }, 900);
+        return () => clearInterval(timerRef.current);
+    }, [isPlaying, total]);
+
+    const handlePlay = () => {
+        if (step >= total) { setStep(0); }
+        setIsPlaying(p => !p);
+    };
+
+    const handleStep = (dir) => {
+        setIsPlaying(false);
+        setStep(s => Math.max(0, Math.min(total, s + dir)));
+    };
+
+    const handleReset = () => { setIsPlaying(false); setStep(0); };
+
+    // Per-token KV size
+    const kvPerToken = 2 * model.L * model.Hkv * model.dhead * 2; // bytes, FP16
+    const currentKV = step * kvPerToken;
+    const kvAtMax = total * kvPerToken;
 
     return (
-        <div className="kv-growth glass-card">
-            <h4 className="kv-growth-title">KV Cache Growth — {model.name} on {gpu.name}</h4>
+        <section className="chapter-section">
+            <h3 className="section-title">Why the KV Cache Grows — Token by Token</h3>
+            <p className="section-desc">
+                Here's the key insight: when generating token <em>n</em>, the model needs
+                to attend to <strong>all previous tokens</strong> (1 through <em>n-1</em>).
+                Without caching, it would have to recompute K and V for every previous token at every step.
+                Instead, the model <strong>stores each token's K and V</strong> in a growing cache.
+                Only the new token's Q is computed fresh — it uses the cached K,V to compute attention.
+            </p>
+            <p className="section-desc">
+                Step through below to see the cache grow. Each token adds {model.Hkv} K-vectors and
+                {' '}{model.Hkv} V-vectors across all {model.L} layers.
+            </p>
 
-            {/* Slider */}
-            <div className="kv-slider-group">
-                <label className="kv-slider-label">
-                    Sequence Length: <span className="mono">{tokens.toLocaleString()} tokens</span>
-                </label>
-                <input
-                    type="range"
-                    min="1"
-                    max={Math.min(8192, maxTokensBeforeOOM * 2)}
-                    value={tokens}
-                    onChange={e => setTokens(Number(e.target.value))}
-                    className="kv-slider"
-                />
-                <div className="kv-slider-marks mono">
-                    <span>1</span>
-                    <span>512</span>
-                    <span>2048</span>
-                    <span>4096</span>
-                    <span>8192</span>
+            <div className="kv-stepper glass-card">
+                {/* Controls */}
+                <div className="kv-stepper-controls">
+                    <button className="kv-step-btn" onClick={handleReset}>↺</button>
+                    <button className="kv-step-btn" onClick={() => handleStep(-1)} disabled={step === 0}>◀</button>
+                    <button className="kv-step-btn play-btn" onClick={handlePlay}>
+                        {isPlaying ? '⏸' : '▶'}
+                    </button>
+                    <button className="kv-step-btn" onClick={() => handleStep(1)} disabled={step >= total}>▶</button>
+                    <span className="kv-step-info">Token {step}/{total}</span>
+                </div>
+
+                {/* Sentence with token states */}
+                <div className="kv-sentence">
+                    {SENTENCE.map((tok, i) => (
+                        <span
+                            key={i}
+                            className={`kv-tok ${i < step ? (i === step - 1 ? 'current' : 'processed') : 'pending'}`}
+                        >
+                            {tok}
+                        </span>
+                    ))}
+                </div>
+
+                {/* Cache contents table */}
+                <div style={{ overflowX: 'auto' }}>
+                    <table className="kv-cache-table">
+                        <thead>
+                            <tr>
+                                <th>Token</th>
+                                <th style={{ color: 'var(--text-accent)' }}>K vector</th>
+                                <th style={{ color: 'var(--accent-secondary)' }}>V vector</th>
+                                <th>Shape (per layer)</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {step === 0 && (
+                                <tr>
+                                    <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', fontStyle: 'italic', fontFamily: 'var(--font-sans)' }}>
+                                        Press play or step forward to start generating tokens...
+                                    </td>
+                                </tr>
+                            )}
+                            {SENTENCE.slice(0, step).map((tok, i) => (
+                                <tr key={i} className={i === step - 1 ? 'current-row' : ''}>
+                                    <td>"{tok}"</td>
+                                    <td className="kv-row-k">K<sub>{i + 1}</sub> [{model.Hkv}×{model.dhead}]</td>
+                                    <td className="kv-row-v">V<sub>{i + 1}</sub> [{model.Hkv}×{model.dhead}]</td>
+                                    <td>[2 × {model.Hkv} × {model.dhead}]</td>
+                                    <td>{formatBytes(kvPerToken / model.L)} / layer</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Accumulator bar */}
+                <div className="kv-accumulator">
+                    <span className="kv-accum-text">KV Cache:</span>
+                    <div className="kv-accum-bar">
+                        <div className="kv-accum-fill" style={{ width: `${kvAtMax > 0 ? (currentKV / kvAtMax) * 100 : 0}%` }} />
+                    </div>
+                    <span className="kv-accum-value">{formatBytes(currentKV)}</span>
+                </div>
+
+                <div className="kv-layer-note">
+                    {step > 0 && (
+                        <>
+                            Cache stores K,V for <strong>{step} token{step > 1 ? 's' : ''}</strong> × <strong>{model.L} layers</strong> ={' '}
+                            <strong>{step * model.L * 2}</strong> vectors ({step} × {model.L} × 2)
+                            <br />
+                            Total: <strong>{step}</strong> tokens × <strong>{formatBytes(kvPerToken)}</strong>/token = <strong>{formatBytes(currentKV)}</strong>
+                        </>
+                    )}
                 </div>
             </div>
+        </section>
+    );
+}
 
-            {/* Live memory bars */}
-            <div className="kv-growth-bars">
-                <MemoryBar
-                    value={weightBytes}
-                    max={budgetBytes}
-                    label="Model Weights (FP16)"
-                    sublabel="Fixed — doesn't change"
-                    color="accent"
-                />
-                <MemoryBar
-                    value={kv}
-                    max={budgetBytes}
-                    label={`KV Cache (${tokens.toLocaleString()} tokens)`}
-                    sublabel={`${formatBytes(perToken)} per token × ${tokens.toLocaleString()} tokens`}
-                    color="warm"
-                />
-                <MemoryBar
-                    value={total}
-                    max={budgetBytes}
-                    label="Total"
-                    color={total > budgetBytes ? 'danger' : 'success'}
-                />
+
+// ============================================================
+// 4. MULTI-HEAD ATTENTION — HEAD GRID
+//    Show Q heads → KV heads grouping (MHA vs GQA vs MQA)
+// ============================================================
+
+function HeadGrid({ model }) {
+    // Determine GQA grouping
+    const qPerKV = model.Hq / model.Hkv;
+    const attnType = model.Hq === model.Hkv ? 'MHA' : model.Hkv === 1 ? 'MQA' : 'GQA';
+
+    return (
+        <section className="chapter-section">
+            <h3 className="section-title">Multi-Head Attention — Why Multiple Heads?</h3>
+            <p className="section-desc">
+                Instead of computing one big attention, the transformer splits Q, K, and V into
+                {' '}<strong>multiple heads</strong>. Each head independently learns to focus on different
+                aspects of the input — one head might track syntax, another might track meaning,
+                another might track position. The outputs of all heads are concatenated and projected back.
+            </p>
+            <p className="section-desc">
+                {model.name} uses <strong>{model.Hq} Query heads</strong> but only <strong>{model.Hkv} KV heads</strong>.
+                {attnType === 'MHA' && (
+                    <> This is <strong>Multi-Head Attention (MHA)</strong> — each Q head has its own dedicated K,V head pair. Full expressiveness, but the largest KV cache.</>
+                )}
+                {attnType === 'GQA' && (
+                    <> This is <strong>Grouped-Query Attention (GQA)</strong> — every {qPerKV} Q heads share a single K,V head. This reduces the KV cache by {qPerKV}× while keeping most of the model quality.</>
+                )}
+                {attnType === 'MQA' && (
+                    <> This is <strong>Multi-Query Attention (MQA)</strong> — all Q heads share a single K,V pair. Maximum cache savings, but can reduce quality.</>
+                )}
+            </p>
+
+            <div className="head-grid-section glass-card">
+                <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--text-muted)', textAlign: 'center', marginBottom: 'var(--space-md)' }}>
+                    {model.name} — {attnType}: {model.Hq} Q heads → {model.Hkv} KV heads ({qPerKV} Q per KV group)
+                </div>
+
+                <div className="head-grid">
+                    {Array.from({ length: model.Hkv }, (_, g) => (
+                        <div key={g} className="head-group">
+                            <div className="head-q-row">
+                                {Array.from({ length: qPerKV }, (_, q) => (
+                                    <div key={q} className="head-dot q-dot" title={`Q head ${g * qPerKV + q + 1}`}>
+                                        Q
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="head-dot kv-dot" title={`KV head ${g + 1}`}>
+                                K,V
+                            </div>
+                            <span className="head-group-label">G{g + 1}</span>
+                        </div>
+                    ))}
+                </div>
+
+                <div className="head-grid-legend">
+                    <div className="head-legend-item">
+                        <div className="head-legend-dot q-legend" />
+                        <span>Query head ({model.dhead}-dim)</span>
+                    </div>
+                    <div className="head-legend-item">
+                        <div className="head-legend-dot kv-legend" />
+                        <span>Shared KV head ({model.dhead}-dim)</span>
+                    </div>
+                </div>
             </div>
+        </section>
+    );
+}
 
-            {/* Stats */}
-            <div className="kv-stats mono">
-                <div className="kv-stat">
-                    <span className="kv-stat-label">Per token per layer</span>
-                    <span className="kv-stat-value">{formatBytes(perTokenPerLayer)}</span>
+
+// ============================================================
+// 5. KV CACHE SIZE FORMULA DERIVATION
+//    Step-by-step with actual numbers
+// ============================================================
+
+function KVCacheFormula({ model }) {
+    const kvPerToken = 2 * model.L * model.Hkv * model.dhead * 2;
+    const kv1024 = kvCacheSize(model, 1024);
+    const kv4096 = kvCacheSize(model, 4096);
+
+    return (
+        <section className="chapter-section">
+            <h3 className="section-title">Deriving the KV Cache Size Formula</h3>
+            <p className="section-desc">
+                Now let's put it all together. How much memory does the KV cache actually consume?
+                We can derive the exact formula from the architecture parameters we've been exploring.
+            </p>
+
+            <div className="formula-block glass-card">
+                <div className="formula-line">
+                    <span className="formula-step-num">1</span>
+                    <span className="formula-annotation">Per token, per layer, we store K and V:</span>
                 </div>
-                <div className="kv-stat">
-                    <span className="kv-stat-label">Per token (all {model.L} layers)</span>
-                    <span className="kv-stat-value">{formatBytes(perToken)}</span>
+                <div className="formula-line" style={{ paddingLeft: '28px' }}>
+                    <span className="formula-expr">
+                        2 <span className="formula-annotation">(K+V)</span> × H<sub>kv</sub> × d<sub>head</sub> × bytes
+                    </span>
                 </div>
-                <div className="kv-stat">
-                    <span className="kv-stat-label">Max tokens before OOM</span>
-                    <span className={`kv-stat-value ${tokens > maxTokensBeforeOOM ? 'danger' : ''}`}>
-                        {maxTokensBeforeOOM.toLocaleString()}
+                <div className="formula-line" style={{ paddingLeft: '28px' }}>
+                    <span className="formula-expr">
+                        = 2 × {model.Hkv} × {model.dhead} × 2 <span className="formula-annotation">(FP16)</span>
+                    </span>
+                    <span className="formula-equals">=</span>
+                    <span className="formula-expr" style={{ color: 'var(--text-accent)' }}>
+                        {formatBytes(2 * model.Hkv * model.dhead * 2)} / token / layer
+                    </span>
+                </div>
+
+                <div className="formula-line" style={{ marginTop: 'var(--space-sm)' }}>
+                    <span className="formula-step-num">2</span>
+                    <span className="formula-annotation">Multiply across all {model.L} layers:</span>
+                </div>
+                <div className="formula-line" style={{ paddingLeft: '28px' }}>
+                    <span className="formula-expr">
+                        {formatBytes(2 * model.Hkv * model.dhead * 2)} × {model.L} layers
+                    </span>
+                    <span className="formula-equals">=</span>
+                    <span className="formula-expr" style={{ color: 'var(--text-accent)' }}>
+                        {formatBytes(kvPerToken)} / token
+                    </span>
+                </div>
+
+                <div className="formula-line" style={{ marginTop: 'var(--space-sm)' }}>
+                    <span className="formula-step-num">3</span>
+                    <span className="formula-annotation">For a sequence of N tokens:</span>
+                </div>
+                <div className="formula-result">
+                    <div className="formula-line">
+                        <span className="formula-expr">
+                            KV Cache = N × 2 × L × H<sub>kv</sub> × d<sub>head</sub> × sizeof(FP16)
+                        </span>
+                    </div>
+                </div>
+
+                <div className="formula-line" style={{ marginTop: 'var(--space-md)' }}>
+                    <span className="formula-step-num">✓</span>
+                    <span className="formula-annotation">Examples for {model.name}:</span>
+                </div>
+                <div className="formula-line" style={{ paddingLeft: '28px' }}>
+                    <span className="formula-expr">
+                        1,024 tokens → {formatBytes(kv1024)}
+                    </span>
+                </div>
+                <div className="formula-line" style={{ paddingLeft: '28px' }}>
+                    <span className="formula-expr">
+                        4,096 tokens → {formatBytes(kv4096)}
                     </span>
                 </div>
             </div>
-        </div>
+        </section>
     );
 }
 
-// --- Model Comparison Table ---
-function ModelComparisonTable({ selectedModel, gpu }) {
-    const budgetBytes = gpu.budget_mb * 1024 * 1024;
+
+// ============================================================
+// 6. 5-MODEL COMPARISON TABLE
+// ============================================================
+
+function ModelComparisonTable({ selectedModel }) {
+    const modelKeys = Object.keys(MODELS);
 
     return (
-        <div className="model-compare glass-card">
-            <h4>KV Cache Comparison Across Models (FP16, T=2048)</h4>
-            <div className="model-compare-table-wrapper">
+        <section className="chapter-section">
+            <h3 className="section-title">How Do Different Models Compare?</h3>
+            <p className="section-desc">
+                The KV cache size varies dramatically across models. More layers, more KV heads,
+                and larger head dimensions all increase the cache. Models using GQA have a significant
+                advantage because they share KV heads across multiple query heads.
+            </p>
+
+            <div className="glass-card" style={{ overflowX: 'auto' }}>
                 <table className="model-compare-table">
                     <thead>
                         <tr>
                             <th>Model</th>
-                            <th>Type</th>
-                            <th>H<sub>kv</sub></th>
-                            <th>d<sub>head</sub></th>
                             <th>Layers</th>
-                            <th>KV Cache</th>
-                            <th>Weights</th>
-                            <th>Total</th>
-                            <th>{gpu.name}</th>
+                            <th>Q Heads</th>
+                            <th>KV Heads</th>
+                            <th>d_head</th>
+                            <th>Type</th>
+                            <th>KV/token</th>
+                            <th>KV @ 4K tokens</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {Object.entries(MODELS).map(([key, m]) => {
-                            const kv = kvCacheSize(m, 2048, 1, 2);
-                            const w = modelWeightSize(m, 2);
-                            const t = kv + w;
-                            const doesFit = t <= budgetBytes;
-                            const isSelected = key === selectedModel;
+                        {modelKeys.map(key => {
+                            const m = MODELS[key];
+                            const kvPT = 2 * m.L * m.Hkv * m.dhead * 2;
+                            const kv4k = kvCacheSize(m, 4096);
+                            const type = m.Hq === m.Hkv ? 'MHA' : m.Hkv === 1 ? 'MQA' : 'GQA';
                             return (
-                                <tr key={key} className={`${isSelected ? 'selected-row' : ''}`}>
-                                    <td className="model-name-cell">{m.name}</td>
-                                    <td><span className={`attn-type-badge ${m.isMHA ? 'mha' : 'gqa'}`}>{m.attnType}</span></td>
-                                    <td className="mono">{m.Hkv}</td>
-                                    <td className="mono">{m.dhead}</td>
-                                    <td className="mono">{m.L}</td>
-                                    <td className="mono">{formatBytes(kv)}</td>
-                                    <td className="mono">{formatBytes(w)}</td>
-                                    <td className="mono">{formatBytes(t)}</td>
-                                    <td className={`verdict-cell ${doesFit ? 'fits' : 'fails'}`}>
-                                        {doesFit ? '✅' : '❌'} {formatBytes(t)}
+                                <tr key={key} className={key === selectedModel ? 'selected-row' : ''}>
+                                    <td style={{ fontFamily: 'var(--font-sans)', fontWeight: 'var(--fw-semibold)' }}>{m.name}</td>
+                                    <td>{m.L}</td>
+                                    <td>{m.Hq}</td>
+                                    <td>{m.Hkv}</td>
+                                    <td>{m.dhead}</td>
+                                    <td>
+                                        <span className={type === 'MHA' ? 'mha-badge' : 'gqa-badge'}>{type}</span>
                                     </td>
+                                    <td>{formatBytes(kvPT)}</td>
+                                    <td>{formatBytes(kv4k)}</td>
                                 </tr>
                             );
                         })}
                     </tbody>
                 </table>
             </div>
-        </div>
+        </section>
     );
 }
 
 
-// --- Main Chapter 1 ---
+// ============================================================
+// CHAPTER 1 — Main Component
+// ============================================================
+
 export default function Chapter1({ selectedModel, selectedGPU }) {
     const model = MODELS[selectedModel];
     const gpu = GPUS[selectedGPU];
@@ -272,127 +638,59 @@ export default function Chapter1({ selectedModel, selectedGPU }) {
     return (
         <div className="chapter chapter1 animate-in">
             <div className="chapter-header">
-                <h2 className="chapter-title">What is attention, and what does it store?</h2>
+                <h2 className="chapter-title">What Is Attention, and What Does It Store?</h2>
                 <p className="chapter-hook">
-                    Every transformer layer computes attention using three vectors — Query, Key, and Value.
-                    Two of these must be remembered for every token ever generated.
+                    The Prologue showed you that inference is memory-bound, and that the KV cache
+                    is the dynamic piece that grows with every token. Now let's open up a single
+                    transformer layer and see exactly how Q, K, and V are computed, how attention
+                    scores are calculated, and why K and V — but not Q — must be cached.
                 </p>
             </div>
 
-            {/* Section 1: Q, K, V */}
+            {/* Section 1: QKV Projection Flow */}
+            <QKVProjectionFlow model={model} />
+
+            {/* Transition */}
             <section className="chapter-section">
-                <ExplanationPanel title="Three vectors per token" variant="what">
-                    <p>
-                        At each layer of the transformer, every token is projected into three vectors:
-                        a <strong>Query</strong> (what am I looking for?), a <strong>Key</strong> (what do I contain?),
-                        and a <strong>Value</strong> (what information do I carry?). Attention scores are computed by
-                        comparing each Query against all Keys, then using those scores to weight the Values.
-                    </p>
-                </ExplanationPanel>
-                <QKVExplainer model={model} />
+                <p className="section-desc" style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center', fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                    Now we have Q, K, and V for each token. The next question is: how does the model use
+                    these three vectors to decide which tokens to pay attention to?
+                </p>
             </section>
 
-            {/* Section 2: Why K and V must be cached */}
+            {/* Section 2: Attention Score Computation */}
+            <AttentionScoreFlow model={model} />
+
+            {/* Transition */}
             <section className="chapter-section">
-                <ExplanationPanel title="Why only K and V are cached" variant="why">
-                    <p>
-                        When generating token #100, the model needs to attend to all previous tokens (1–99).
-                        That means it needs the <strong>Keys and Values</strong> of every past token to compute attention scores.
-                    </p>
-                    <p>
-                        But the <strong>Query</strong> is only needed for the <em>current</em> token — it's computed fresh
-                        each step and immediately discarded. There's no reason to store it.
-                    </p>
-                    <p>
-                        This is the <strong>KV Cache</strong>: a growing memory buffer that stores all past K and V vectors,
-                        across all layers, for every token generated so far.
-                    </p>
-                </ExplanationPanel>
+                <p className="section-desc" style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center', fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                    Each new token needs K and V from <em>all previous tokens</em> to compute attention.
+                    Recomputing them every time would be wasteful — so we cache them. Let's see this in action.
+                </p>
             </section>
 
-            {/* Section 3: Attention Head Grid */}
-            <section className="chapter-section">
-                <ExplanationPanel title={`Attention heads in ${model.name}`} variant="what">
-                    <p>
-                        {model.name} has <strong>{model.Hq} Query heads</strong> and <strong>{model.Hkv} KV heads</strong>,
-                        organized as <strong>{model.attnType}</strong>. Each head operates on a <code>{model.dhead}</code>-dimensional
-                        slice of the full <code>{model.dmodel}</code>-dimensional model.
-                    </p>
-                </ExplanationPanel>
-                <HeadGrid model={model} />
-            </section>
+            {/* Section 3: KV Cache Token Stepper */}
+            <KVCacheStepper model={model} />
 
-            {/* Section 4: KV Cache Formula */}
-            <section className="chapter-section">
-                <ExplanationPanel title="The KV Cache formula" variant="math">
-                    <p>
-                        The KV cache stores 2 vectors (K and V) × per layer × per KV head × per token:
-                    </p>
-                    <p>
-                        <code>KV Cache = 2 × L × H_kv × d_head × T × precision_bytes</code>
-                    </p>
-                    <p>
-                        For <strong>{model.name}</strong>: 2 × {model.L} × {model.Hkv} × {model.dhead} × T × 2 bytes.
-                        That's <code>{formatBytes(kvPerToken(model))}</code> per token across all {model.L} layers.
-                    </p>
-                </ExplanationPanel>
-            </section>
+            {/* Section 4: Multi-Head Grid */}
+            <HeadGrid model={model} />
 
-            {/* Section 5: Interactive KV Cache Growth */}
-            <section className="chapter-section">
-                <KVCacheGrowth model={model} gpu={gpu} />
-            </section>
+            {/* Section 5: KV Cache Formula */}
+            <KVCacheFormula model={model} />
 
-            {/* Go Deeper: Full derivation */}
-            <GoDeeper title="Go Deeper — Step-by-step KV cache derivation">
-                <ExplanationPanel title="Building the formula from scratch" variant="math">
-                    <p><strong>Step 1: Per head, per token</strong></p>
-                    <p>
-                        Each KV head stores one Key and one Value vector, each of dimension <code>d_head = {model.dhead}</code>.
-                        In FP16, that's <code>{model.dhead} × 2 = {model.dhead * 2} bytes</code> per vector.
-                        Both K and V: <code>{model.dhead * 2} × 2 = {model.dhead * 4} bytes</code>.
-                    </p>
-                    <p><strong>Step 2: Across all KV heads in one layer</strong></p>
-                    <p>
-                        {model.name} has {model.Hkv} KV heads per layer:
-                        <code> {model.dhead * 4} × {model.Hkv} = {model.dhead * 4 * model.Hkv} bytes</code> per token per layer.
-                    </p>
-                    <p><strong>Step 3: Across all layers</strong></p>
-                    <p>
-                        {model.L} layers: <code>{model.dhead * 4 * model.Hkv} × {model.L} = {(model.dhead * 4 * model.Hkv * model.L).toLocaleString()} bytes</code> per token = <code>{formatBytes(kvPerToken(model))}</code>.
-                    </p>
-                    <p><strong>Step 4: Across T tokens</strong></p>
-                    <p>
-                        At T = 2048: <code>{formatBytes(kvPerToken(model))} × 2048 = {formatBytes(kvCacheSize(model, 2048))}</code>.
-                    </p>
-                </ExplanationPanel>
-            </GoDeeper>
-
-            {/* Section 6: Cross-model comparison */}
-            <section className="chapter-section">
-                <ExplanationPanel title="The dramatic difference between models" variant="why">
-                    <p>
-                        Compare {model.name} ({model.attnType}, H_kv={model.Hkv}) with Llama-2-7B (Pure MHA, H_kv=32).
-                        Llama-2-7B stores <strong>{(MODELS['llama-2-7b'].Hkv / model.Hkv).toFixed(0)}× more KV data per token</strong> because
-                        every Query head has its own KV pair. Pure MHA is the most expressive but the most memory-hungry.
-                    </p>
-                </ExplanationPanel>
-                <ModelComparisonTable selectedModel={selectedModel} gpu={gpu} />
-            </section>
+            {/* Section 6: Model Comparison */}
+            <ModelComparisonTable selectedModel={selectedModel} />
 
             {/* Hook to Chapter 2 */}
             <section className="chapter-section">
                 <div className="chapter-next-hook glass-card">
                     <p>
-                        The KV cache grows linearly with every generated token. For large models and long sequences,
-                        it can consume more memory than the model weights themselves. We need techniques to <strong>shrink it</strong>.
-                    </p>
-                    <p>
-                        GQA already reduces cache by sharing KV heads. But there's more: <strong>PagedAttention</strong> eliminates
-                        wasted memory from pre-allocation, and <strong>KV eviction</strong> drops tokens that no longer matter.
+                        The KV cache grows linearly with sequence length and can consume gigabytes of memory.
+                        For {model.name} at 4,096 tokens, that's <strong>{formatBytes(kvCacheSize(model, 4096))}</strong> — on
+                        top of the {formatBytes(modelWeightSize(model, 2))} model weights.
                     </p>
                     <p className="chapter-next-question">
-                        → How do we stop memory from exploding?
+                        → Can we shrink this cache? (GQA, PagedAttention, Quantization)
                     </p>
                 </div>
             </section>

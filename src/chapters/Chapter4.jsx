@@ -1,342 +1,407 @@
 import { useState, useMemo } from 'react';
-import { MODELS, GPUS, kvCacheSize, modelWeightSize, totalMemory, fits, formatBytes } from '../data/modelConfig';
-import ExplanationPanel from '../components/ExplanationPanel';
-import MemoryBar from '../components/MemoryBar';
-import GoDeeper from '../components/GoDeeper';
+import { MODELS, GPUS, kvCacheSize, modelWeightSize, totalMemory, fits, formatBytes, getModelEntries, getGPUEntries } from '../data/modelConfig';
 import './Chapter4.css';
 
-// --- Precision Ladder ---
+// --- Precision definitions ---
 const PRECISIONS = [
-    { key: 'fp32', label: 'FP32', bits: 32, bytes: 4, color: '#ff6b6b', desc: 'Full precision — training standard' },
-    { key: 'fp16', label: 'FP16', bits: 16, bytes: 2, color: '#7c6aff', desc: 'Half precision — inference standard' },
-    { key: 'int8', label: 'INT8', bits: 8, bytes: 1, color: '#4ecdc4', desc: '8-bit integer — 2× smaller, near-lossless' },
-    { key: 'int4', label: 'INT4', bits: 4, bytes: 0.5, color: '#ffd73b', desc: '4-bit integer — 4× smaller, some quality loss' },
+    { key: 'fp32', label: 'FP32', bits: 32, bytes: 4, color: '#ff6b6b', desc: '32-bit float — full precision, 4 bytes per weight. Standard training format.' },
+    { key: 'fp16', label: 'FP16', bits: 16, bytes: 2, color: '#7c6aff', desc: '16-bit float — half precision, 2 bytes per weight. Standard inference format.' },
+    { key: 'int8', label: 'INT8', bits: 8, bytes: 1, color: '#4ecdc4', desc: '8-bit integer — 4× smaller than FP32. Minimal quality loss for most models.' },
+    { key: 'int4', label: 'INT4', bits: 4, bytes: 0.5, color: '#ffd73b', desc: '4-bit integer — 8× smaller than FP32. Noticeable quality trade-off, but huge savings.' },
 ];
 
+
+// ============================================================
+// 1. PRECISION LADDER
+//    Click each rung to see how model size changes
+// ============================================================
+
 function PrecisionLadder({ model }) {
-    const [selectedPrecision, setSelectedPrecision] = useState('fp16');
-    const currentP = PRECISIONS.find(p => p.key === selectedPrecision);
-    const fp16Size = modelWeightSize(model, 2);
-    const currentSize = modelWeightSize(model, currentP.bytes);
-    const savingsVsFp16 = ((1 - currentSize / fp16Size) * 100).toFixed(0);
+    const [selected, setSelected] = useState('fp16');
+
+    const selPrec = PRECISIONS.find(p => p.key === selected);
+    const fp32Size = modelWeightSize(model, 4);
+    const currentSize = modelWeightSize(model, selPrec.bytes);
+    const ratio = fp32Size / currentSize;
 
     return (
-        <div className="precision-ladder glass-card">
-            <h4 className="precision-title">Precision Ladder — {model.name}</h4>
-            <div className="precision-steps">
-                {PRECISIONS.map(p => {
-                    const size = modelWeightSize(model, p.bytes);
-                    const isSelected = p.key === selectedPrecision;
-                    return (
-                        <button
-                            key={p.key}
-                            className={`precision-step ${isSelected ? 'active' : ''}`}
-                            onClick={() => setSelectedPrecision(p.key)}
-                            style={{ '--step-color': p.color }}
-                        >
-                            <div className="precision-step-header">
-                                <span className="precision-step-label mono">{p.label}</span>
-                                <span className="precision-step-bits mono">{p.bits}-bit</span>
-                            </div>
-                            <div className="precision-step-size mono">{formatBytes(size)}</div>
-                            <div className="precision-step-desc">{p.desc}</div>
-                        </button>
-                    );
-                })}
-            </div>
+        <section className="chapter-section">
+            <h3 className="section-title">The Precision Ladder — From FP32 to INT4</h3>
+            <p className="section-desc">
+                Every weight in a neural network is a number. The question is: how many bits do we use to
+                store each number? Full precision (FP32) uses 32 bits = 4 bytes per weight. But during
+                inference, we don't need training-level precision. We can progressively reduce precision —
+                FP16, INT8, INT4 — trading small quality losses for massive memory savings.
+            </p>
 
-            <div className="precision-detail">
-                <div className="precision-detail-row">
-                    <span>Selected: <strong>{currentP.label}</strong> ({currentP.bits} bits per weight)</span>
-                    <span className="mono">{formatBytes(currentSize)}</span>
+            <div className="precision-section glass-card">
+                <div className="precision-ladder">
+                    {PRECISIONS.map(p => (
+                        <div
+                            key={p.key}
+                            className={`precision-rung ${p.key} ${selected === p.key ? 'selected' : ''}`}
+                            onClick={() => setSelected(p.key)}
+                            style={selected === p.key ? { borderColor: p.color } : {}}
+                        >
+                            <div className="precision-bits">{p.bits}b</div>
+                            <div className="precision-info">
+                                <div className="precision-name">{p.label}</div>
+                                <div className="precision-desc">{p.desc}</div>
+                            </div>
+                            <div className="precision-size">
+                                <div className="precision-size-value">{formatBytes(modelWeightSize(model, p.bytes))}</div>
+                                <div className="precision-size-label">{model.name}</div>
+                            </div>
+                        </div>
+                    ))}
                 </div>
-                {selectedPrecision !== 'fp16' && (
-                    <div className={`precision-savings ${Number(savingsVsFp16) > 0 ? 'positive' : 'negative'}`}>
-                        {Number(savingsVsFp16) > 0 ? `${savingsVsFp16}% smaller than FP16` : `${Math.abs(Number(savingsVsFp16))}% larger than FP16`}
+
+                <div className="precision-mem-bar">
+                    <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {selPrec.label}: {ratio}× smaller than FP32
+                    </span>
+                    <div className="precision-mem-track">
+                        <div className="precision-mem-fill" style={{ width: `${(currentSize / fp32Size) * 100}%` }}>
+                            <span className="precision-mem-text">{formatBytes(currentSize)}</span>
+                        </div>
                     </div>
-                )}
+                </div>
             </div>
-        </div>
+        </section>
     );
 }
 
-// --- Weight Grid Visualization ---
+
+// ============================================================
+// 2. WEIGHT GRID — Show quantization effect visually
+//    8×8 grid of weights, toggle FP16/INT8/INT4 to see rounding
+// ============================================================
+
 function WeightGrid() {
-    const [quantized, setQuantized] = useState(false);
+    const [mode, setMode] = useState('fp16');
 
-    // 8x8 grid of "weights" with typical and outlier values
-    const weights = [
-        [0.12, -0.03, 0.45, -0.21, 0.08, -0.67, 0.33, 0.14],
-        [-0.18, 0.29, -0.05, 0.11, -0.42, 0.07, 0.56, -0.09],
-        [0.21, -0.15, 0.38, 0.03, -0.27, 0.19, -0.44, 0.06],
-        [-0.08, 0.51, -0.12, 3.75, 0.15, -0.31, 0.22, -0.17],  // outlier at [3][3]
-        [0.34, -0.23, 0.09, -0.16, 0.41, 0.02, -0.35, 0.28],
-        [-0.11, 0.18, -0.39, 0.24, -0.06, 0.47, 0.13, -0.52],
-        [0.07, -0.28, 0.16, -0.04, 0.32, -0.19, 0.53, 0.01],
-        [-0.22, 0.36, -0.14, 0.09, -0.38, 0.26, -0.08, 0.43],
-    ];
+    // Generate realistic-looking weights
+    const weights = useMemo(() => {
+        const data = [];
+        for (let i = 0; i < 64; i++) {
+            // Most weights cluster near 0, few outliers
+            const base = (Math.sin(i * 0.7) * 0.5 + Math.cos(i * 1.3) * 0.3) * 0.4;
+            // Add occasional outliers
+            const outlier = (i === 7 || i === 23 || i === 51) ? (i === 7 ? 2.1 : i === 23 ? -1.8 : 1.6) : 0;
+            data.push(parseFloat((base + outlier).toFixed(4)));
+        }
+        return data;
+    }, []);
 
-    const quantize = (val) => {
-        // Simulate INT4 quantization: map to [-8, 7] range then back
-        const minVal = -0.67;
-        const maxVal = 3.75;
-        const scale = (maxVal - minVal) / 15;
-        const quantized = Math.round((val - minVal) / scale);
-        const clamped = Math.max(0, Math.min(15, quantized));
-        return minVal + clamped * scale;
+    const quantize = (val, m) => {
+        if (m === 'fp16') return val;
+        if (m === 'int8') {
+            // Simulate INT8: 256 levels over range [-2.5, 2.5]
+            const scale = 5.0 / 256;
+            return Math.round(val / scale) * scale;
+        }
+        // INT4: 16 levels
+        const scale = 5.0 / 16;
+        return Math.round(val / scale) * scale;
     };
 
     const isOutlier = (val) => Math.abs(val) > 1.0;
 
-    return (
-        <div className="weight-grid-section glass-card">
-            <div className="weight-grid-header">
-                <h4>Weight Matrix — INT4 Quantization Effect</h4>
-                <button
-                    className={`weight-grid-toggle ${quantized ? 'quantized' : ''}`}
-                    onClick={() => setQuantized(!quantized)}
-                >
-                    {quantized ? 'Quantized (INT4)' : 'Original (FP16)'}
-                </button>
-            </div>
+    const getColor = (val, original) => {
+        const error = Math.abs(val - original);
+        const norm = Math.min(Math.abs(val) / 2, 1);
 
-            <div className="weight-grid">
-                {weights.map((row, r) =>
-                    row.map((val, c) => {
-                        const displayVal = quantized ? quantize(val) : val;
-                        const error = Math.abs(quantize(val) - val);
-                        const hasOutlier = isOutlier(val);
-                        const errorClass = quantized && error > 0.1 ? 'high-error' : quantized && error > 0.02 ? 'mid-error' : '';
+        if (mode === 'fp16') {
+            return `rgba(124, 106, 255, ${0.15 + norm * 0.55})`;
+        }
+        if (error > 0.3) {
+            return `rgba(255, 107, 107, ${0.3 + error * 0.3})`;
+        }
+        return `rgba(78, 205, 196, ${0.15 + norm * 0.55})`;
+    };
 
-                        return (
-                            <div
-                                key={`${r}-${c}`}
-                                className={`weight-cell ${quantized ? 'quantized' : ''} ${hasOutlier ? 'outlier' : ''} ${errorClass}`}
-                                title={`Original: ${val.toFixed(3)}, Quantized: ${quantize(val).toFixed(3)}, Error: ${error.toFixed(4)}`}
-                            >
-                                <span className="weight-val mono">{displayVal.toFixed(2)}</span>
-                            </div>
-                        );
-                    })
-                )}
-            </div>
-
-            <div className="weight-grid-legend">
-                <span className="legend-entry"><span className="legend-swatch normal" /> Normal range</span>
-                <span className="legend-entry"><span className="legend-swatch outlier" /> Outlier (≫ range)</span>
-                {quantized && <span className="legend-entry"><span className="legend-swatch high-err" /> High quantization error</span>}
-            </div>
-
-            {quantized && (
-                <div className="weight-grid-callout animate-in">
-                    <strong>The outlier problem:</strong> When one weight is 3.75 while most are in [-0.7, 0.6],
-                    the quantization scale must accommodate the full range. This wastes resolution on the majority of
-                    weights. Group quantization and GPTQ solve this by computing separate scales per block.
-                </div>
-            )}
-        </div>
-    );
-}
-
-// --- PTQ vs QAT ---
-function PTQvsQAT() {
-    const [activeMethod, setActiveMethod] = useState('ptq');
+    // Calculate total error
+    const totalError = weights.reduce((sum, w) => {
+        const q = quantize(w, mode);
+        return sum + Math.abs(w - q);
+    }, 0);
+    const avgError = totalError / weights.length;
 
     return (
-        <div className="ptq-qat-section">
-            <div className="ptq-qat-toggle">
-                <button
-                    className={`ptq-qat-btn ${activeMethod === 'ptq' ? 'active' : ''}`}
-                    onClick={() => setActiveMethod('ptq')}
-                >
-                    PTQ (Post-Training)
-                </button>
-                <button
-                    className={`ptq-qat-btn ${activeMethod === 'qat' ? 'active' : ''}`}
-                    onClick={() => setActiveMethod('qat')}
-                >
-                    QAT (Quantization-Aware)
-                </button>
-            </div>
+        <section className="chapter-section">
+            <h3 className="section-title">What Happens When You Quantize Weights?</h3>
+            <p className="section-desc">
+                Quantization maps continuous floating-point values to a smaller set of discrete values.
+                With INT8 you get 256 possible values; with INT4, only 16. Most weights are small and close
+                to zero — they quantize well. But <strong>outliers</strong> (large values) suffer the most
+                error because they're far from the nearest quantization level.
+            </p>
+            <p className="section-desc">
+                Toggle between precisions to see how the weight values change. Weights marked with
+                {' '}<strong style={{ color: 'var(--accent-warm)' }}>!</strong> are outliers — notice how
+                their error increases more at lower precisions.
+            </p>
 
-            <div className="ptq-qat-content glass-card">
-                {activeMethod === 'ptq' ? (
-                    <div className="ptq-qat-view animate-in">
-                        <h4>Post-Training Quantization (PTQ)</h4>
-                        <div className="ptq-qat-flow">
-                            <div className="ptq-qat-step">
-                                <span className="step-num">1</span>
-                                <span>Train model normally in FP16/FP32</span>
-                            </div>
-                            <div className="ptq-qat-arrow">↓</div>
-                            <div className="ptq-qat-step">
-                                <span className="step-num">2</span>
-                                <span>Freeze weights — training is done</span>
-                            </div>
-                            <div className="ptq-qat-arrow">↓</div>
-                            <div className="ptq-qat-step highlight">
-                                <span className="step-num">3</span>
-                                <span>Quantize: round each weight to nearest integer level</span>
-                            </div>
-                            <div className="ptq-qat-arrow">↓</div>
-                            <div className="ptq-qat-step">
-                                <span className="step-num">4</span>
-                                <span>Deploy — no retraining needed</span>
-                            </div>
-                        </div>
-                        <div className="ptq-qat-pros-cons">
-                            <div className="pros">
-                                <h5>✅ Pros</h5>
-                                <ul>
-                                    <li>Fast — takes minutes, no GPU needed for calibration</li>
-                                    <li>Works on any pretrained model</li>
-                                    <li>Widely supported (GGUF, GPTQ, AWQ)</li>
-                                </ul>
-                            </div>
-                            <div className="cons">
-                                <h5>⚠️ Cons</h5>
-                                <ul>
-                                    <li>Quality degrades at INT4 — outliers hurt precision</li>
-                                    <li>Sensitive to calibration data quality</li>
-                                    <li>Not ideal for very small models</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="ptq-qat-view animate-in">
-                        <h4>Quantization-Aware Training (QAT)</h4>
-                        <div className="ptq-qat-flow">
-                            <div className="ptq-qat-step highlight">
-                                <span className="step-num">1</span>
-                                <span>Insert fake quantize nodes during training</span>
-                            </div>
-                            <div className="ptq-qat-arrow">↓</div>
-                            <div className="ptq-qat-step highlight">
-                                <span className="step-num">2</span>
-                                <span>Model learns to compensate for quantization errors</span>
-                            </div>
-                            <div className="ptq-qat-arrow">↓</div>
-                            <div className="ptq-qat-step">
-                                <span className="step-num">3</span>
-                                <span>After training, apply real quantization</span>
-                            </div>
-                            <div className="ptq-qat-arrow">↓</div>
-                            <div className="ptq-qat-step">
-                                <span className="step-num">4</span>
-                                <span>Deploy — quality is preserved even at low bit-widths</span>
-                            </div>
-                        </div>
-                        <div className="ptq-qat-pros-cons">
-                            <div className="pros">
-                                <h5>✅ Pros</h5>
-                                <ul>
-                                    <li>Best quality at INT4/INT3 — model adapts to quantization</li>
-                                    <li>Handles outliers gracefully</li>
-                                    <li>Used by Google (Gemma), Meta (Llama QAT)</li>
-                                </ul>
-                            </div>
-                            <div className="cons">
-                                <h5>⚠️ Cons</h5>
-                                <ul>
-                                    <li>Requires additional training compute (expensive)</li>
-                                    <li>Needs access to training pipeline</li>
-                                    <li>Not available for all open models</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-}
-
-// --- Final Fits Table ---
-function FinalFitsTable({ selectedModel, selectedGPU }) {
-    const [precision, setPrecision] = useState(2); // bytes per weight
-
-    const precisionOptions = [
-        { label: 'FP16', bytes: 2, bits: 16 },
-        { label: 'INT8', bytes: 1, bits: 8 },
-        { label: 'INT4', bytes: 0.5, bits: 4 },
-    ];
-
-    return (
-        <div className="fits-table-section glass-card">
-            <div className="fits-table-header">
-                <h4>Final Fits Table — All Models × All Devices</h4>
-                <div className="fits-precision-toggle">
-                    {precisionOptions.map(p => (
+            <div className="weight-grid-section glass-card">
+                <div className="weight-grid-controls">
+                    {PRECISIONS.filter(p => p.key !== 'fp32').map(p => (
                         <button
-                            key={p.label}
-                            className={`fits-prec-btn ${precision === p.bytes ? 'active' : ''}`}
-                            onClick={() => setPrecision(p.bytes)}
+                            key={p.key}
+                            className={`weight-grid-btn ${mode === p.key ? 'active' : ''}`}
+                            onClick={() => setMode(p.key)}
                         >
                             {p.label}
                         </button>
                     ))}
                 </div>
+
+                <div className="weight-grid">
+                    {weights.map((w, i) => {
+                        const q = quantize(w, mode);
+                        const outlier = isOutlier(w);
+                        return (
+                            <div
+                                key={i}
+                                className={`weight-cell ${outlier ? 'outlier' : ''}`}
+                                style={{ background: getColor(q, w), color: outlier ? 'var(--accent-warm)' : 'var(--text-primary)' }}
+                                title={`Original: ${w.toFixed(4)}, Quantized: ${q.toFixed(4)}, Error: ${Math.abs(w - q).toFixed(4)}`}
+                            >
+                                {q.toFixed(1)}
+                            </div>
+                        );
+                    })}
+                </div>
+
+                <div className="weight-error-display">
+                    Average quantization error: <span className="weight-error-value">{avgError.toFixed(4)}</span>
+                    {' '}({mode === 'fp16' ? 'no error' : mode === 'int8' ? 'typically acceptable' : 'noticeable degradation'})
+                </div>
             </div>
-
-            <p className="fits-table-desc">
-                Sequence length: 2,048 tokens. KV cache at {precision === 0.5 ? 'INT4' : precision === 1 ? 'INT8' : 'FP16'}.
-                Change precision to see what quantization unlocks.
-            </p>
-
-            <div className="fits-table-wrapper">
-                <table className="fits-table">
-                    <thead>
-                        <tr>
-                            <th>Model</th>
-                            <th>Weights</th>
-                            <th>KV Cache</th>
-                            {Object.values(GPUS).map(g => (
-                                <th key={g.name} className={g.name === GPUS[selectedGPU]?.name ? 'selected-col' : ''}>
-                                    {g.name}
-                                </th>
-                            ))}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {Object.entries(MODELS).map(([mKey, m]) => {
-                            const w = modelWeightSize(m, precision);
-                            const kv = kvCacheSize(m, 2048, 1, precision);
-                            const isSelectedModel = mKey === selectedModel;
-                            return (
-                                <tr key={mKey} className={isSelectedModel ? 'selected-row' : ''}>
-                                    <td className="model-name-cell">{m.name}</td>
-                                    <td className="mono">{formatBytes(w)}</td>
-                                    <td className="mono">{formatBytes(kv)}</td>
-                                    {Object.entries(GPUS).map(([gKey, g]) => {
-                                        const total = w + kv;
-                                        const budgetBytes = g.budget_mb * 1024 * 1024;
-                                        const doesFit = total <= budgetBytes;
-                                        const pct = (total / budgetBytes * 100).toFixed(0);
-                                        const isSelectedGPU = gKey === selectedGPU;
-
-                                        return (
-                                            <td
-                                                key={gKey}
-                                                className={`fits-cell ${doesFit ? 'fits' : 'fails'} ${isSelectedGPU && isSelectedModel ? 'highlight-cell' : ''}`}
-                                            >
-                                                <span className="fits-icon">{doesFit ? '✅' : '❌'}</span>
-                                                <span className="fits-pct mono">{pct}%</span>
-                                            </td>
-                                        );
-                                    })}
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
-            </div>
-        </div>
+        </section>
     );
 }
 
 
-// --- Main Chapter 4 ---
+// ============================================================
+// 3. PTQ vs QAT
+// ============================================================
+
+function PTQvsQAT() {
+    return (
+        <section className="chapter-section">
+            <h3 className="section-title">Two Approaches: PTQ vs QAT</h3>
+            <p className="section-desc">
+                There are two main ways to quantize a model. <strong>Post-Training Quantization (PTQ)</strong>
+                {' '}converts a pre-trained model's weights to lower precision without any retraining.
+                {' '}<strong>Quantization-Aware Training (QAT)</strong> simulates quantization during training
+                so the model learns to be robust to the reduced precision.
+            </p>
+
+            <div className="ptq-qat-section glass-card">
+                <div className="ptq-qat-grid">
+                    {/* PTQ */}
+                    <div className="ptq-qat-card">
+                        <div className="ptq-qat-title">PTQ — Post-Training Quantization</div>
+                        <div className="ptq-qat-subtitle">
+                            Quantize after training. No GPU-hours needed. The most practical approach.
+                        </div>
+                        <div className="ptq-qat-flow">
+                            <div className="ptq-qat-step">
+                                <span className="ptq-qat-step-icon">🧠</span>
+                                <span className="ptq-qat-step-text">Start with trained FP16 model</span>
+                            </div>
+                            <div className="ptq-qat-step">
+                                <span className="ptq-qat-step-icon">📊</span>
+                                <span className="ptq-qat-step-text">Run calibration data through model</span>
+                            </div>
+                            <div className="ptq-qat-step">
+                                <span className="ptq-qat-step-icon">📏</span>
+                                <span className="ptq-qat-step-text">Compute scale & zero-point per group</span>
+                            </div>
+                            <div className="ptq-qat-step">
+                                <span className="ptq-qat-step-icon">🔢</span>
+                                <span className="ptq-qat-step-text">Round weights to nearest integer level</span>
+                            </div>
+                            <div className="ptq-qat-step">
+                                <span className="ptq-qat-step-icon">✅</span>
+                                <span className="ptq-qat-step-text">Done — no training required</span>
+                            </div>
+                        </div>
+                        <div className="ptq-qat-pros">
+                            <strong>✅ Pros:</strong> Fast (minutes), no training data needed, works with any model.
+                            <br />
+                            <strong style={{ color: 'var(--accent-warm)' }}>⚠️ Cons:</strong> Quality may degrade, especially at INT4.
+                        </div>
+                    </div>
+
+                    {/* QAT */}
+                    <div className="ptq-qat-card">
+                        <div className="ptq-qat-title">QAT — Quantization-Aware Training</div>
+                        <div className="ptq-qat-subtitle">
+                            Simulate quantization during training. Higher quality, but requires GPU time.
+                        </div>
+                        <div className="ptq-qat-flow">
+                            <div className="ptq-qat-step">
+                                <span className="ptq-qat-step-icon">🧠</span>
+                                <span className="ptq-qat-step-text">Start with pre-trained model</span>
+                            </div>
+                            <div className="ptq-qat-step">
+                                <span className="ptq-qat-step-icon">🔄</span>
+                                <span className="ptq-qat-step-text">Insert fake-quantize ops in forward pass</span>
+                            </div>
+                            <div className="ptq-qat-step">
+                                <span className="ptq-qat-step-icon">📉</span>
+                                <span className="ptq-qat-step-text">Fine-tune with gradient-based optimization</span>
+                            </div>
+                            <div className="ptq-qat-step">
+                                <span className="ptq-qat-step-icon">🎯</span>
+                                <span className="ptq-qat-step-text">Model learns to compensate for rounding</span>
+                            </div>
+                            <div className="ptq-qat-step">
+                                <span className="ptq-qat-step-icon">✅</span>
+                                <span className="ptq-qat-step-text">Export quantized model</span>
+                            </div>
+                        </div>
+                        <div className="ptq-qat-pros">
+                            <strong>✅ Pros:</strong> Better quality at low precision (INT4), model adapts to quantization.
+                            <br />
+                            <strong style={{ color: 'var(--accent-warm)' }}>⚠️ Cons:</strong> Requires training infrastructure, hours–days of GPU time.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+
+// ============================================================
+// 4. QUANTIZATION TECHNIQUES — GPTQ, AWQ, Group Quant
+// ============================================================
+
+function QuantTechniques() {
+    const techniques = [
+        {
+            name: 'GPTQ',
+            tag: 'PTQ',
+            tagClass: 'ptq-tag',
+            desc: 'Quantizes weight columns one at a time, compensating for the error of each column by adjusting remaining columns. Uses a small calibration dataset (~128 samples). The most popular INT4 quantization method.',
+        },
+        {
+            name: 'AWQ (Activation-Aware)',
+            tag: 'PTQ',
+            tagClass: 'ptq-tag',
+            desc: 'Identifies which weights are most important by looking at activation magnitudes — weights that multiply large activations get higher precision. Typically outperforms GPTQ at the same bit-width.',
+        },
+        {
+            name: 'Group Quantization',
+            tag: 'Both',
+            tagClass: 'both-tag',
+            desc: 'Instead of one scale per entire layer, compute a scale factor per group of 32-128 weights. Groups containing outliers get a wider range, preserving their accuracy. The extra scale factors add ~0.5 bits overhead but dramatically improve quality.',
+        },
+    ];
+
+    return (
+        <section className="chapter-section">
+            <h3 className="section-title">State-of-the-Art Quantization Techniques</h3>
+            <p className="section-desc">
+                Not all quantization is created equal. Modern methods go beyond simple rounding to
+                intelligently handle outliers and preserve model quality.
+            </p>
+
+            <div className="quant-tech-grid">
+                {techniques.map(t => (
+                    <div key={t.name} className="quant-tech-card glass-card">
+                        <div className="quant-tech-name">{t.name}</div>
+                        <span className={`quant-tech-tag ${t.tagClass}`}>{t.tag}</span>
+                        <div className="quant-tech-desc">{t.desc}</div>
+                    </div>
+                ))}
+            </div>
+        </section>
+    );
+}
+
+
+// ============================================================
+// 5. FINAL FITS TABLE — 5 models × 4 GPUs × 3 precisions
+// ============================================================
+
+function FinalFitsTable({ selectedModel, selectedGPU }) {
+    const models = getModelEntries();
+    const gpus = getGPUEntries();
+    const precisions = [
+        { label: 'FP16', bytes: 2 },
+        { label: 'INT8', bytes: 1 },
+        { label: 'INT4', bytes: 0.5 },
+    ];
+
+    const tokens = 4096;
+
+    return (
+        <section className="chapter-section">
+            <h3 className="section-title">The Final Verdict — What Fits Where?</h3>
+            <p className="section-desc">
+                Combining everything from Chapters 1-4: model weights at different precisions + KV cache
+                for {tokens.toLocaleString()} tokens. Does your model fit on your GPU?
+            </p>
+
+            <div className="fits-section glass-card">
+                <table className="fits-table">
+                    <thead>
+                        <tr>
+                            <th className="model-col" rowSpan={2}>Model</th>
+                            {gpus.map(([key, g]) => (
+                                <th key={key} colSpan={precisions.length} style={key === selectedGPU ? { color: 'var(--text-accent)' } : {}}>
+                                    {g.name}
+                                    <div style={{ fontSize: '9px', fontWeight: 'var(--fw-regular)' }}>{(g.budget_mb / 1024).toFixed(0)} GB</div>
+                                </th>
+                            ))}
+                        </tr>
+                        <tr>
+                            {gpus.map(([gKey]) =>
+                                precisions.map(p => (
+                                    <th key={`${gKey}-${p.label}`}>
+                                        <div className="fits-precision-header">
+                                            <span className="fits-precision-label">{p.label}</span>
+                                        </div>
+                                    </th>
+                                ))
+                            )}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {models.map(([mKey, m]) => (
+                            <tr key={mKey} className={mKey === selectedModel ? 'selected-row' : ''}>
+                                <td className="model-name">{m.name}</td>
+                                {gpus.map(([gKey, g]) =>
+                                    precisions.map(p => {
+                                        const doesFit = fits(m, g, tokens, 1, p.bytes, 2);
+                                        const total = totalMemory(m, tokens, 1, p.bytes, 2);
+                                        return (
+                                            <td key={`${gKey}-${p.label}`}>
+                                                <div className="fits-cell">
+                                                    <span className="fits-verdict">{doesFit ? '✅' : '❌'}</span>
+                                                    <span className="fits-size">{formatBytes(total)}</span>
+                                                </div>
+                                            </td>
+                                        );
+                                    })
+                                )}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    );
+}
+
+
+// ============================================================
+// CHAPTER 4 — Main Component
+// ============================================================
+
 export default function Chapter4({ selectedModel, selectedGPU }) {
     const model = MODELS[selectedModel];
     const gpu = GPUS[selectedGPU];
@@ -344,134 +409,68 @@ export default function Chapter4({ selectedModel, selectedGPU }) {
     return (
         <div className="chapter chapter4 animate-in">
             <div className="chapter-header">
-                <h2 className="chapter-title">How do we shrink the model itself?</h2>
+                <h2 className="chapter-title">Quantization — Trading Bits for Memory</h2>
                 <p className="chapter-hook">
-                    We've optimized the KV cache and the attention algorithm. But the biggest memory cost
-                    remains: the model weights. Quantization is the answer — representing weights with fewer bits.
+                    Flash Attention optimized how we <em>compute</em> attention. But the model weights
+                    themselves still occupy the majority of memory. A 7B-parameter model at FP16 takes
+                    14 GB — that won't fit on most consumer GPUs. Quantization is the technique of
+                    storing weights in fewer bits, dramatically reducing memory with surprisingly small
+                    quality trade-offs.
                 </p>
             </div>
 
-            {/* Section 1: The Precision Ladder */}
+            {/* Section 1: Precision Ladder */}
+            <PrecisionLadder model={model} />
+
+            {/* Bridge */}
             <section className="chapter-section">
-                <ExplanationPanel title="Fewer bits, smaller model" variant="what">
-                    <p>
-                        Every weight in a neural network is a number. In FP16, each number uses 16 bits (2 bytes).
-                        <strong> Quantization</strong> converts these weights to lower-precision formats — INT8 (1 byte)
-                        or INT4 (0.5 bytes). A {model.name} model shrinks from <code>{formatBytes(modelWeightSize(model, 2))}</code> (FP16)
-                        to <code>{formatBytes(modelWeightSize(model, 0.5))}</code> (INT4) — a <strong>4× reduction</strong>.
-                    </p>
-                    <p>
-                        Remarkably, modern LLMs are robust to quantization. At INT8, quality loss is nearly imperceptible.
-                        Even at INT4, most benchmarks show only 1–3% degradation. The weights have enough redundancy that
-                        reduced precision doesn't destroy the learned patterns.
-                    </p>
-                </ExplanationPanel>
-                <PrecisionLadder model={model} />
+                <p className="section-desc" style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center', fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                    Reducing precision sounds straightforward — just use fewer bits. But not all weights
+                    are equally easy to compress. What actually happens when you quantize?
+                </p>
             </section>
 
-            {/* Section 2: What quantization looks like */}
+            {/* Section 2: Weight Grid */}
+            <WeightGrid />
+
+            {/* Bridge */}
             <section className="chapter-section">
-                <ExplanationPanel title="Seeing quantization in action" variant="what">
-                    <p>
-                        Quantization maps continuous FP16 values to a small set of discrete integer levels. For INT4,
-                        there are only <strong>16 possible values</strong> (0–15). The formula:
-                    </p>
-                    <p>
-                        <code>q = round((x - min) / scale)</code> where <code>scale = (max - min) / (2^bits - 1)</code>
-                    </p>
-                    <p>
-                        The challenge: if one weight is much larger than the rest (an <strong>outlier</strong>), the scale
-                        must stretch to cover it, wasting resolution on the majority of "normal" weights.
-                    </p>
-                </ExplanationPanel>
-                <WeightGrid />
+                <p className="section-desc" style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center', fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                    The outlier problem is real. There are two main strategies for handling it: quantize
+                    after training and hope for the best, or teach the model to be resilient during training.
+                </p>
             </section>
 
             {/* Section 3: PTQ vs QAT */}
+            <PTQvsQAT />
+
+            {/* Section 4: GPTQ / AWQ / Group Quant */}
+            <QuantTechniques />
+
+            {/* Bridge */}
             <section className="chapter-section">
-                <ExplanationPanel title="Two approaches to quantization" variant="what">
-                    <p>
-                        <strong>PTQ (Post-Training Quantization)</strong> quantizes a model after training —
-                        it's fast and works on any pretrained model. <strong>QAT (Quantization-Aware Training)</strong>
-                        integrates quantization into the training process, letting the model learn to be quantization-friendly.
-                    </p>
-                </ExplanationPanel>
-                <PTQvsQAT />
+                <p className="section-desc" style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center', fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                    Now we have all the pieces: KV cache optimization (Ch 1-2), Flash Attention (Ch 3),
+                    and weight quantization (Ch 4). The final question: given all these techniques,
+                    which models actually fit on which hardware?
+                </p>
             </section>
 
-            {/* Go Deeper: GPTQ and AWQ */}
-            <GoDeeper title="Go Deeper — GPTQ, AWQ, and Group Quantization">
-                <ExplanationPanel title="Solving the outlier problem" variant="math">
-                    <p><strong>Group Quantization:</strong> Instead of one scale for all weights in a row,
-                        compute a separate scale per group of ~128 weights. Outliers only affect their local group.</p>
-                    <p><strong>GPTQ:</strong> Uses second-order information (Hessian) to determine which weights
-                        are most sensitive to quantization error, and quantizes them more carefully. Achieves near-FP16
-                        quality at INT4 for most models.</p>
-                    <p><strong>AWQ (Activation-Aware Weight Quantization):</strong> Instead of treating all weights
-                        equally, identifies which weights produce the largest activations and keeps those at higher
-                        precision. The insight: a small fraction of weights (~1%) are responsible for most activation
-                        magnitude.</p>
-                </ExplanationPanel>
-            </GoDeeper>
-
-            {/* Section 4: The Final Fits Table */}
-            <section className="chapter-section">
-                <ExplanationPanel title="Everything comes together" variant="why">
-                    <p>
-                        This is the culmination of our journey. Combine GQA (smaller KV cache) with quantization (smaller
-                        weights) and the fits table transforms. Models that couldn't run on a Raspberry Pi at FP16 suddenly
-                        fit comfortably at INT4. The A100 that was needed for Llama-2-7B? An iPhone might do.
-                    </p>
-                    <p>
-                        <strong>Try toggling between FP16, INT8, and INT4</strong> to see how precision unlocks devices.
-                    </p>
-                </ExplanationPanel>
-                <FinalFitsTable selectedModel={selectedModel} selectedGPU={selectedGPU} />
-            </section>
+            {/* Section 5: Final Fits Table */}
+            <FinalFitsTable selectedModel={selectedModel} selectedGPU={selectedGPU} />
 
             {/* Conclusion */}
             <section className="chapter-section">
-                <div className="conclusion glass-card">
-                    <h3 className="conclusion-title">The Story So Far</h3>
-                    <div className="conclusion-points">
-                        <div className="conclusion-point">
-                            <span className="conclusion-icon">📖</span>
-                            <div>
-                                <strong>Prologue:</strong> LLM inference is memory-bound. Each token reads the entire model from memory.
-                            </div>
-                        </div>
-                        <div className="conclusion-point">
-                            <span className="conclusion-icon">🔑</span>
-                            <div>
-                                <strong>Chapter 1:</strong> The KV cache stores Keys and Values for every past token, at every layer.
-                                It grows linearly and can exceed model weights.
-                            </div>
-                        </div>
-                        <div className="conclusion-point">
-                            <span className="conclusion-icon">🗜️</span>
-                            <div>
-                                <strong>Chapter 2:</strong> GQA shrinks the KV cache by sharing KV heads. PagedAttention eliminates memory fragmentation.
-                            </div>
-                        </div>
-                        <div className="conclusion-point">
-                            <span className="conclusion-icon">⚡</span>
-                            <div>
-                                <strong>Chapter 3:</strong> Flash Attention restructures computation to avoid slow HBM writes.
-                                More FLOPs, but fewer memory operations = faster.
-                            </div>
-                        </div>
-                        <div className="conclusion-point">
-                            <span className="conclusion-icon">🎯</span>
-                            <div>
-                                <strong>Chapter 4:</strong> Quantization reduces model weights from FP16 to INT4 — a 4× compression
-                                that makes LLMs run on consumer devices.
-                            </div>
-                        </div>
-                    </div>
-                    <p className="conclusion-footer">
-                        Every optimization targets the same bottleneck: <strong>memory</strong>.
-                        Less data to store. Less data to read. Fewer trips to slow memory.
-                        That's what makes LLM inference fast.
+                <div className="chapter-next-hook glass-card">
+                    <p>
+                        <strong>The bottom line:</strong> With quantization + GQA + Flash Attention, even
+                        a consumer GPU can run powerful language models. The smallest models ({MODELS['smollm2-135m'].name})
+                        fit everywhere — even a Raspberry Pi. The largest ({MODELS['llama-2-7b'].name}) need
+                        careful engineering or a data-center GPU.
+                    </p>
+                    <p style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-xs)', marginTop: 'var(--space-sm)' }}>
+                        Try changing the model and GPU in the top bar to see how these numbers shift for your
+                        specific hardware.
                     </p>
                 </div>
             </section>
