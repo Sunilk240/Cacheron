@@ -4,10 +4,10 @@
 
 ### Interactive Visual Guide to LLM Inference Optimization
 
-[![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-Cacheron-7c6aff?style=for-the-badge)](https://sunilkk240.github.io/Cacheron/)
+[![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-Cacheron-7c6aff?style=for-the-badge)](https://sunilk240.github.io/Cacheron/)
 [![Built with React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react)](https://react.dev)
 [![Vite](https://img.shields.io/badge/Vite-7-646cff?style=flat-square&logo=vite)](https://vite.dev)
-[![Deploy](https://img.shields.io/badge/GitHub_Pages-deployed-4ecdc4?style=flat-square&logo=github)](https://sunilkk240.github.io/Cacheron/)
+[![Deploy](https://img.shields.io/badge/GitHub_Pages-deployed-4ecdc4?style=flat-square&logo=github)](https://sunilk240.github.io/Cacheron/)
 
 *Why can't a 7B-parameter model fit on your GPU? Where does all the memory go?*
 *Cacheron answers these questions visually — with animations, interactive controls, and real hardware numbers.*
@@ -101,7 +101,7 @@ Cacheron is an **interactive explainer** that breaks down how Large Language Mod
 
 ```bash
 # Clone
-git clone https://github.com/Sunilkk240/Cacheron.git
+git clone https://github.com/sunilk240/Cacheron.git
 cd Cacheron
 
 # Install
@@ -164,7 +164,7 @@ Cacheron/
 
 The site auto-deploys to GitHub Pages on every push to `main` via GitHub Actions.
 
-**Live at → [sunilkk240.github.io/Cacheron](https://sunilkk240.github.io/Cacheron/)**
+**Live at → [sunilk240.github.io/Cacheron](https://sunilk240.github.io/Cacheron/)**
 
 ---
 
