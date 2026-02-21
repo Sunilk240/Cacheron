@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c6aff"/>
+      <stop offset="50%" stop-color="#6b8cff"/>
+      <stop offset="100%" stop-color="#4ecdc4"/>
+    </linearGradient>
+    <linearGradient id="grad2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#4ecdc4"/>
+      <stop offset="100%" stop-color="#7c6aff"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="64" height="64" rx="16" fill="#0f0f1a"/>
+  <!-- Outer ring -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="none" stroke="url(#grad)" stroke-width="1.5" opacity="0.4"/>
+  <!-- C shape made of cache blocks — 3x4 grid forming a C -->
+  <!-- Top row (3 blocks) -->
+  <rect x="18" y="11" width="9" height="9" rx="2" fill="#7c6aff"/>
+  <rect x="29" y="11" width="9" height="9" rx="2" fill="#7c6aff" opacity="0.85"/>
+  <rect x="40" y="11" width="9" height="9" rx="2" fill="#6b8cff" opacity="0.7"/>
+  <!-- Middle-top row (1 block on left) -->
+  <rect x="18" y="22" width="9" height="9" rx="2" fill="#5d9bff" opacity="0.9"/>
+  <!-- Middle-bottom row (1 block on left) -->
+  <rect x="18" y="33" width="9" height="9" rx="2" fill="#4ecdc4" opacity="0.9"/>
+  <!-- Bottom row (3 blocks) -->
+  <rect x="18" y="44" width="9" height="9" rx="2" fill="#4ecdc4"/>
+  <rect x="29" y="44" width="9" height="9" rx="2" fill="#4ecdc4" opacity="0.85"/>
+  <rect x="40" y="44" width="9" height="9" rx="2" fill="#4ecdc4" opacity="0.7"/>
+  <!-- Sparkle/optimization accent -->
+  <circle cx="49" cy="27" r="2" fill="#ffd73b" opacity="0.9"/>
+  <circle cx="45" cy="32" r="1.2" fill="#ffd73b" opacity="0.6"/>
+</svg>
