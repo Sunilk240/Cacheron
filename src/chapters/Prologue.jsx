@@ -24,7 +24,7 @@ const PIPELINE_STAGES = [
 
 function TransformerFlow({ model }) {
     const [activeStage, setActiveStage] = useState(-1); // -1 = idle / waiting
-    const [isPlaying, setIsPlaying] = useState(true);
+    const [isPlaying, setIsPlaying] = useState(false);
     const [speed, setSpeed] = useState(1);
     const [commentaryLog, setCommentaryLog] = useState([]);
     const timerRef = useRef(null);
@@ -70,10 +70,11 @@ function TransformerFlow({ model }) {
         return () => clearInterval(timerRef.current);
     }, [isPlaying, speed]);
 
-    // Start playing on mount
-    useEffect(() => { setActiveStage(0); }, []);
 
-    const handlePlayPause = () => setIsPlaying(p => !p);
+    const handlePlayPause = () => {
+        if (activeStage < 0) setActiveStage(0);
+        setIsPlaying(p => !p);
+    };
 
     const layerCount = model.L;
 
