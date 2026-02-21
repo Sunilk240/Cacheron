@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { MODELS, GPUS, kvCacheSize, modelWeightSize, totalMemory, fits, formatBytes, getModelEntries, getGPUEntries } from '../data/modelConfig';
 import './Chapter4.css';
 
@@ -79,6 +79,9 @@ function PrecisionLadder({ model }) {
 
 function WeightGrid() {
     const [mode, setMode] = useState('fp16');
+    const [waveActive, setWaveActive] = useState(false);
+    const [waveProgress, setWaveProgress] = useState(-1);
+    const waveRef = useRef(null);
 
     // Generate realistic-looking weights
     const weights = useMemo(() => {
@@ -127,6 +130,36 @@ function WeightGrid() {
     }, 0);
     const avgError = totalError / weights.length;
 
+    // Wave animation: diagonal sweep
+    const triggerWave = (targetMode) => {
+        if (waveActive) return;
+        setWaveActive(true);
+        setMode('fp16'); // Start from fp16
+        setWaveProgress(0);
+        const maxDiag = 7 + 7; // 8x8 grid → max diagonal index = 14
+        let step = 0;
+        waveRef.current = setInterval(() => {
+            step++;
+            setWaveProgress(step);
+            if (step > maxDiag + 2) {
+                clearInterval(waveRef.current);
+                setMode(targetMode);
+                setWaveActive(false);
+                setWaveProgress(-1);
+            }
+        }, 60);
+    };
+
+    useEffect(() => () => clearInterval(waveRef.current), []);
+
+    const getCellWaveClass = (index) => {
+        if (waveProgress < 0) return '';
+        const row = Math.floor(index / 8);
+        const col = index % 8;
+        const diag = row + col;
+        return diag <= waveProgress ? 'wave-hit' : '';
+    };
+
     return (
         <section className="chapter-section">
             <h3 className="section-title">What Happens When You Quantize Weights?</h3>
@@ -153,6 +186,14 @@ function WeightGrid() {
                             {p.label}
                         </button>
                     ))}
+                    <button
+                        className="stepper-btn"
+                        onClick={() => triggerWave(mode === 'fp16' ? 'int8' : mode === 'int8' ? 'int4' : 'int4')}
+                        disabled={waveActive}
+                        style={{ marginLeft: 'auto' }}
+                    >
+                        {waveActive ? '⏳ Quantizing...' : '🎬 Quantize!'}
+                    </button>
                 </div>
 
                 <div className="weight-grid">
@@ -162,7 +203,7 @@ function WeightGrid() {
                         return (
                             <div
                                 key={i}
-                                className={`weight-cell ${outlier ? 'outlier' : ''}`}
+                                className={`weight-cell ${outlier ? 'outlier' : ''} ${getCellWaveClass(i)}`}
                                 style={{ background: getColor(q, w), color: outlier ? 'var(--accent-warm)' : 'var(--text-primary)' }}
                                 title={`Original: ${w.toFixed(4)}, Quantized: ${q.toFixed(4)}, Error: ${Math.abs(w - q).toFixed(4)}`}
                             >

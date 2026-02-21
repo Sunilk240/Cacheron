@@ -103,7 +103,7 @@ export const GPUS = {
 
 // ----- DEFAULTS -----
 
-export const DEFAULT_MODEL = 'smollm2-135m';
+export const DEFAULT_MODEL = 'llama-3.2-3b';
 export const DEFAULT_GPU = 'rtx-3060';
 
 // ============================================================
@@ -179,14 +179,19 @@ export function tileSize(gpu, model, precisionBytes = 2) {
 // ============================================================
 
 /**
- * Format bytes into human-readable MB or GB.
+ * Format bytes into human-readable KB, MB, or GB.
+ * Always shows 2 decimal places for MB to avoid "0 MB" display.
  */
 export function formatBytes(bytes) {
     const mb = bytes / (1024 * 1024);
     if (mb >= 1024) {
-        return `${(mb / 1024).toFixed(1)} GB`;
+        return `${(mb / 1024).toFixed(2)} GB`;
     }
-    return `${Math.round(mb)} MB`;
+    if (mb < 0.01) {
+        const kb = bytes / 1024;
+        return `${kb.toFixed(2)} KB`;
+    }
+    return `${mb.toFixed(2)} MB`;
 }
 
 /**

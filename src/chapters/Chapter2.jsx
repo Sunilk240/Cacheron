@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { MODELS, GPUS, kvCacheSize, kvPerToken, formatBytes } from '../data/modelConfig';
+import AnimationCommentary from '../components/AnimationCommentary';
 import './Chapter2.css';
 
 // ============================================================
@@ -8,7 +9,9 @@ import './Chapter2.css';
 // ============================================================
 
 function AttentionModeToggle({ model, gpu }) {
-    const [mode, setMode] = useState('actual'); // 'mha', 'gqa', 'mqa', 'actual'
+    const [mode, setMode] = useState('actual');
+    const [animSavings, setAnimSavings] = useState(0);
+    const animRef = useRef(null);
 
     const modes = {
         mha: { label: 'MHA', kvHeads: model.Hq, desc: 'Multi-Head Attention: every Q head gets its own dedicated K,V head. Maximum expressiveness, but the largest KV cache.' },
@@ -30,6 +33,30 @@ function AttentionModeToggle({ model, gpu }) {
     const mhaKV = kvPerToken(model, model.Hq) * tokens;
     const currentKV = kvPerToken(model, kvH) * tokens;
     const savings = mhaKV > 0 ? ((1 - currentKV / mhaKV) * 100).toFixed(0) : 0;
+
+    // Animated savings counter
+    useEffect(() => {
+        clearInterval(animRef.current);
+        const target = Number(savings);
+        setAnimSavings(0);
+        if (target <= 0) return;
+        const step = Math.max(1, Math.round(target / 30));
+        animRef.current = setInterval(() => {
+            setAnimSavings(prev => {
+                const next = prev + step;
+                if (next >= target) { clearInterval(animRef.current); return target; }
+                return next;
+            });
+        }, 25);
+        return () => clearInterval(animRef.current);
+    }, [mode, savings]);
+
+    // Commentary per mode
+    const getCommentary = () => {
+        if (mode === 'mha') return `Full Multi-Head Attention: all ${model.Hq} Query heads have their own dedicated K,V head. This is the original Transformer design — maximum expressiveness, but the KV cache is at its largest.`;
+        if (mode === 'mqa') return `Multi-Query Attention: ALL ${model.Hq} Query heads share a single K,V pair. The cache is ${model.Hq}× smaller than MHA, but some quality may be lost since all heads see identical K,V.`;
+        return `${model.name} uses ${model.attnType}: ${model.Hq} Q heads share ${model.Hkv} KV heads. Groups of ${qPerKV} Q heads share each KV pair, saving ${savings}% vs MHA.`;
+    };
 
     return (
         <section className="chapter-section">
@@ -94,7 +121,7 @@ function AttentionModeToggle({ model, gpu }) {
                         <div className="mode-stat-label">KV @ {tokens.toLocaleString()} tokens</div>
                     </div>
                     <div className="mode-stat">
-                        <div className="mode-stat-value savings">{savings}%</div>
+                        <div className="mode-stat-value savings">{animSavings}%</div>
                         <div className="mode-stat-label">Savings vs MHA</div>
                     </div>
                 </div>
@@ -118,6 +145,8 @@ function AttentionModeToggle({ model, gpu }) {
                         </div>
                     </div>
                 </div>
+
+                <AnimationCommentary text={getCommentary()} icon="🔄" />
             </div>
         </section>
     );
@@ -131,6 +160,21 @@ function AttentionModeToggle({ model, gpu }) {
 
 function PagedAttentionViz() {
     const [showPaged, setShowPaged] = useState(false);
+    const [isAnimating, setIsAnimating] = useState(false);
+    const timerRef = useRef(null);
+
+    const handleAnimate = () => {
+        if (isAnimating) return;
+        setIsAnimating(true);
+        setShowPaged(false);
+        // After a beat, switch to paged
+        timerRef.current = setTimeout(() => {
+            setShowPaged(true);
+            setTimeout(() => setIsAnimating(false), 600);
+        }, 800);
+    };
+
+    useEffect(() => () => clearTimeout(timerRef.current), []);
 
     // Simulate 3 requests with different lengths
     const requests = [
@@ -189,12 +233,15 @@ function PagedAttentionViz() {
             </p>
 
             <div className="paged-section glass-card">
-                <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'center', marginBottom: 'var(--space-lg)' }}>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'center', marginBottom: 'var(--space-lg)', flexWrap: 'wrap' }}>
                     <button className={`attn-mode-btn ${!showPaged ? 'active' : ''}`} onClick={() => setShowPaged(false)}>
                         Before (Contiguous)
                     </button>
                     <button className={`attn-mode-btn ${showPaged ? 'active' : ''}`} onClick={() => setShowPaged(true)}>
                         After (PagedAttention)
+                    </button>
+                    <button className="stepper-btn" onClick={handleAnimate} disabled={isAnimating} title="Watch the transition" style={{ marginLeft: 'auto' }}>
+                        {isAnimating ? '⏳' : '🎬 Animate'}
                     </button>
                 </div>
 

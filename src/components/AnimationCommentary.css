@@ -1,0 +1,42 @@
+.animation-commentary {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: rgba(124, 106, 255, 0.06);
+    border: 1px solid rgba(124, 106, 255, 0.12);
+    border-radius: var(--radius-md);
+    margin-top: var(--space-sm);
+    min-height: 40px;
+    transition: opacity 200ms ease;
+}
+
+.animation-commentary.commentary-flash {
+    animation: commentary-pulse 400ms ease;
+}
+
+@keyframes commentary-pulse {
+    0% {
+        background: rgba(124, 106, 255, 0.15);
+    }
+
+    100% {
+        background: rgba(124, 106, 255, 0.06);
+    }
+}
+
+.commentary-icon {
+    font-size: var(--fs-sm);
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.commentary-text {
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.commentary-text strong {
+    color: var(--text-accent);
+}

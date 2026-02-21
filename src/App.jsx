@@ -3,6 +3,7 @@ import { DEFAULT_MODEL, DEFAULT_GPU } from './data/modelConfig';
 import ModelGPUSelector from './components/ModelGPUSelector';
 import VerdictBanner from './components/VerdictBanner';
 import ChapterNav from './components/ChapterNav';
+import TutorialOverlay from './components/TutorialOverlay';
 import Prologue from './chapters/Prologue';
 import Chapter1 from './chapters/Chapter1';
 import Chapter2 from './chapters/Chapter2';
@@ -31,6 +32,7 @@ function App() {
 
   return (
     <div className="app">
+      <TutorialOverlay />
       {/* Top bar: Model + GPU selector */}
       <header className="app-header">
         <div className="app-logo">

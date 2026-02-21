@@ -1,5 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { MODELS, GPUS, tileSize, formatBytes } from '../data/modelConfig';
+import AnimationCommentary from '../components/AnimationCommentary';
+import SpeedControl from '../components/SpeedControl';
 import './Chapter3.css';
 
 // ============================================================
@@ -83,6 +85,10 @@ function MemoryHierarchy({ gpu }) {
 // ============================================================
 
 function StandardVsFlash({ model, gpu }) {
+    const [activeStep, setActiveStep] = useState(-1);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [speed, setSpeed] = useState(1);
+    const timerRef = useRef(null);
     const seqLen = 1024;
     const d = model.dhead;
 
@@ -104,6 +110,43 @@ function StandardVsFlash({ model, gpu }) {
 
     const savings = ((1 - flashTotal / standardTotal) * 100).toFixed(0);
 
+    // 4 standard steps + mapped to flash (steps 1-3 + checkmark)
+    const stdStepCommentary = [
+        `Step 1: Loading Q and K matrices from HBM. This is ${(2 * seqLen * d / 1e6).toFixed(1)}M values read.`,
+        `Step 2: Computing S = Q × Kᵀ and writing the FULL ${seqLen}×${seqLen} = ${(seqLen * seqLen / 1e6).toFixed(1)}M attention matrix back to HBM. This is the bottleneck!`,
+        `Step 3: Reading S back from HBM to compute softmax, then writing the result P back to HBM. Two more HBM round-trips for the N×N matrix.`,
+        `Step 4: Reading P and V from HBM to compute the final output O. Total: ${(standardTotal / 1e6).toFixed(1)}M values moved through slow HBM.`,
+    ];
+
+    const flashStepCommentary = [
+        `Flash step 1: Loading Q, K, V tiles from HBM — just ${(3 * seqLen * d / 1e6).toFixed(1)}M values total, read ONCE.`,
+        `Flash step 2: All computation happens in SRAM! S, softmax, and P×V tile are computed without any HBM writes. This is where Flash Attention wins.`,
+        `Flash step 3: Writing only the final output O to HBM — ${(seqLen * d / 1e6).toFixed(1)}M values. No N×N matrix ever hits HBM.`,
+        `Done! Flash Attention used ${savings}% less memory IO. The N×N attention matrix was never materialized.`,
+    ];
+
+    // Auto-play
+    useEffect(() => {
+        if (!isPlaying) { clearTimeout(timerRef.current); return; }
+        const delay = 2000 / speed;
+        timerRef.current = setTimeout(() => {
+            setActiveStep(prev => {
+                if (prev >= 3) { setIsPlaying(false); return 3; }
+                return prev + 1;
+            });
+        }, delay);
+        return () => clearTimeout(timerRef.current);
+    }, [isPlaying, activeStep, speed]);
+
+    const handlePlay = () => {
+        if (activeStep >= 3) setActiveStep(-1);
+        setIsPlaying(!isPlaying);
+    };
+
+    const commentary = activeStep >= 0 && activeStep <= 3
+        ? stdStepCommentary[activeStep] + '\n\n' + flashStepCommentary[activeStep]
+        : 'Press ▶ Play to watch the comparison step-by-step.';
+
     return (
         <section className="chapter-section">
             <h3 className="section-title">Standard Attention vs Flash Attention — IO Comparison</h3>
@@ -113,6 +156,16 @@ function StandardVsFlash({ model, gpu }) {
                 multiple times. Flash Attention processes tiles entirely in SRAM, reading Q/K/V from HBM only
                 once and writing the output once. For a sequence of {seqLen} tokens:
             </p>
+
+            <div className="flash-controls" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
+                <button className="stepper-btn" onClick={handlePlay}>
+                    {isPlaying ? '⏸' : '▶'} {isPlaying ? 'Pause' : 'Play'}
+                </button>
+                <SpeedControl speed={speed} setSpeed={setSpeed} />
+                <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                    Step {Math.max(0, activeStep + 1)}/4
+                </span>
+            </div>
 
             <div className="attn-compare glass-card">
                 <div className="attn-compare-grid">
@@ -125,37 +178,32 @@ function StandardVsFlash({ model, gpu }) {
                             Materializes the full N×N attention matrix in HBM. Multiple round-trips between HBM and compute.
                         </div>
                         <div className="flow-steps">
-                            <div className="flow-step">
-                                <div className="flow-step-num">1</div>
-                                <div className="flow-step-content">
-                                    <div className="flow-step-action">Load Q, K from HBM</div>
-                                    <div className="flow-step-io read">↑ READ {seqLen}×{d} × 2</div>
+                            {[0, 1, 2, 3].map(i => (
+                                <div key={i} className={`flow-step ${activeStep === i ? 'step-active' : ''} ${activeStep > i ? 'step-done' : ''}`}>
+                                    <div className="flow-step-num">{i + 1}</div>
+                                    <div className="flow-step-content">
+                                        {i === 0 && <>
+                                            <div className="flow-step-action">Load Q, K from HBM</div>
+                                            <div className="flow-step-io read">↑ READ {seqLen}×{d} × 2</div>
+                                        </>}
+                                        {i === 1 && <>
+                                            <div className="flow-step-action">Compute S = Q × Kᵀ</div>
+                                            <div className="flow-step-io write">↓ WRITE {seqLen}×{seqLen} to HBM</div>
+                                            <div className="flow-step-detail">Full N×N matrix materialized!</div>
+                                        </>}
+                                        {i === 2 && <>
+                                            <div className="flow-step-action">Read S, compute softmax(S)</div>
+                                            <div className="flow-step-io read">↑ READ {seqLen}×{seqLen}</div>
+                                            <div className="flow-step-io write">↓ WRITE {seqLen}×{seqLen}</div>
+                                        </>}
+                                        {i === 3 && <>
+                                            <div className="flow-step-action">Read P, V → compute O = P × V</div>
+                                            <div className="flow-step-io read">↑ READ {seqLen}×{seqLen} + {seqLen}×{d}</div>
+                                            <div className="flow-step-io write">↓ WRITE {seqLen}×{d}</div>
+                                        </>}
+                                    </div>
                                 </div>
-                            </div>
-                            <div className="flow-step">
-                                <div className="flow-step-num">2</div>
-                                <div className="flow-step-content">
-                                    <div className="flow-step-action">Compute S = Q × Kᵀ</div>
-                                    <div className="flow-step-io write">↓ WRITE {seqLen}×{seqLen} to HBM</div>
-                                    <div className="flow-step-detail">Full N×N matrix materialized!</div>
-                                </div>
-                            </div>
-                            <div className="flow-step">
-                                <div className="flow-step-num">3</div>
-                                <div className="flow-step-content">
-                                    <div className="flow-step-action">Read S, compute softmax(S)</div>
-                                    <div className="flow-step-io read">↑ READ {seqLen}×{seqLen}</div>
-                                    <div className="flow-step-io write">↓ WRITE {seqLen}×{seqLen}</div>
-                                </div>
-                            </div>
-                            <div className="flow-step">
-                                <div className="flow-step-num">4</div>
-                                <div className="flow-step-content">
-                                    <div className="flow-step-action">Read P, V → compute O = P × V</div>
-                                    <div className="flow-step-io read">↑ READ {seqLen}×{seqLen} + {seqLen}×{d}</div>
-                                    <div className="flow-step-io write">↓ WRITE {seqLen}×{d}</div>
-                                </div>
-                            </div>
+                            ))}
                         </div>
                         <div className="io-counter standard-io">
                             <div className="io-counter-value">{(standardTotal / 1e6).toFixed(1)}M</div>
@@ -172,35 +220,33 @@ function StandardVsFlash({ model, gpu }) {
                             Tiles Q×K^T into SRAM-sized blocks. Never materializes the full N×N matrix.
                         </div>
                         <div className="flow-steps">
-                            <div className="flow-step">
-                                <div className="flow-step-num">1</div>
-                                <div className="flow-step-content">
-                                    <div className="flow-step-action">Load Q, K, V tiles from HBM</div>
-                                    <div className="flow-step-io read">↑ READ 3×{seqLen}×{d} (once)</div>
-                                </div>
-                            </div>
-                            <div className="flow-step">
-                                <div className="flow-step-num">2</div>
-                                <div className="flow-step-content">
-                                    <div className="flow-step-action">Compute tile of S, softmax, × V in SRAM</div>
-                                    <div className="flow-step-io sram-op">⚡ ALL in SRAM — no HBM write</div>
-                                    <div className="flow-step-detail">Uses online softmax to update running result</div>
-                                </div>
-                            </div>
-                            <div className="flow-step">
-                                <div className="flow-step-num">3</div>
-                                <div className="flow-step-content">
-                                    <div className="flow-step-action">Write final output O to HBM</div>
-                                    <div className="flow-step-io write">↓ WRITE {seqLen}×{d} (once)</div>
-                                </div>
-                            </div>
-                            <div className="flow-step">
-                                <div className="flow-step-num">✓</div>
-                                <div className="flow-step-content">
-                                    <div className="flow-step-action">No intermediate N×N matrix ever stored</div>
-                                    <div className="flow-step-detail">The attention matrix is computed tile-by-tile and immediately consumed</div>
-                                </div>
-                            </div>
+                            {[0, 1, 2, 3].map(i => {
+                                const labels = ['1', '2', '3', '✓'];
+                                return (
+                                    <div key={i} className={`flow-step ${activeStep === i ? 'step-active' : ''} ${activeStep > i ? 'step-done' : ''}`}>
+                                        <div className="flow-step-num">{labels[i]}</div>
+                                        <div className="flow-step-content">
+                                            {i === 0 && <>
+                                                <div className="flow-step-action">Load Q, K, V tiles from HBM</div>
+                                                <div className="flow-step-io read">↑ READ 3×{seqLen}×{d} (once)</div>
+                                            </>}
+                                            {i === 1 && <>
+                                                <div className="flow-step-action">Compute tile of S, softmax, × V in SRAM</div>
+                                                <div className="flow-step-io sram-op">⚡ ALL in SRAM — no HBM write</div>
+                                                <div className="flow-step-detail">Uses online softmax to update running result</div>
+                                            </>}
+                                            {i === 2 && <>
+                                                <div className="flow-step-action">Write final output O to HBM</div>
+                                                <div className="flow-step-io write">↓ WRITE {seqLen}×{d} (once)</div>
+                                            </>}
+                                            {i === 3 && <>
+                                                <div className="flow-step-action">No intermediate N×N matrix ever stored</div>
+                                                <div className="flow-step-detail">The attention matrix is computed tile-by-tile and immediately consumed</div>
+                                            </>}
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                         <div className="io-counter flash-io">
                             <div className="io-counter-value">{(flashTotal / 1e6).toFixed(1)}M</div>
@@ -208,6 +254,8 @@ function StandardVsFlash({ model, gpu }) {
                         </div>
                     </div>
                 </div>
+
+                <AnimationCommentary text={commentary} icon="📊" />
             </div>
         </section>
     );

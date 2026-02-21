@@ -1,20 +1,81 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { MODELS, GPUS, kvCacheSize, modelWeightSize, formatBytes } from '../data/modelConfig';
+import SpeedControl from '../components/SpeedControl';
+import AnimationCommentary from '../components/AnimationCommentary';
+import SmallModelNote from '../components/SmallModelNote';
 import './Prologue.css';
 
 // ============================================================
-// 1. TRANSFORMER ARCHITECTURE FLOW
-// Animated block diagram: Embedding → Layers → LM Head → Token
-// Data dots flow through, autoregressive loop, model-aware layers
+// 1. TRANSFORMER ARCHITECTURE FLOW — AUTO-PLAYING
+// Animated block diagram with data dots flowing through pipeline.
+// Dot travels: Input → Embed → Layer 1..N → LM Head → Output
+// Auto-loops, with running commentary for each stage.
 // ============================================================
 
+const PIPELINE_STAGES = [
+    { node: 'input', label: 'Token Input', commentary: (m) => `A token from the prompt enters the pipeline. It starts as a simple token ID — just a number representing a word or subword.` },
+    { node: 'embed', label: 'Embedding', commentary: (m) => `The token ID is looked up in an embedding table to produce a ${m.dmodel}-dimensional vector. This vector is the token's initial representation — a list of ${m.dmodel} numbers.` },
+    { node: 'layer-0', label: 'Layer 1', commentary: (m) => `The embedding enters Layer 1. Inside: Self-Attention (${m.Hq} Q heads, ${m.Hkv} KV heads, ${m.attnType}) computes which tokens to attend to, then a Feed-Forward Network transforms the result.` },
+    { node: 'layer-1', label: 'Layer 2', commentary: (m) => `Layer 2 receives the output from Layer 1 and applies the same attention + FFN pattern, but with different learned weights. Each layer refines the token's representation.` },
+    { node: 'layers-rest', label: `Layers 3–N`, commentary: (m) => `The vector continues through the remaining ${m.L - 2} layers. Each layer has its own attention weights and FFN weights — totaling ${formatBytes(modelWeightSize(m, 2))} for ${m.name}.` },
+    { node: 'lm-head', label: 'LM Head', commentary: (m) => `The final layer's output (a ${m.dmodel}-dim vector) is multiplied by the LM Head to produce logits — one score for every word in the vocabulary.` },
+    { node: 'output', label: 'Next Token', commentary: (m) => `Softmax converts logits into probabilities. The model samples or picks the highest-probability token. This token then feeds back as input — that's autoregressive generation.` },
+];
+
 function TransformerFlow({ model }) {
-    const [hoveredNode, setHoveredNode] = useState(null);
+    const [activeStage, setActiveStage] = useState(-1); // -1 = idle / waiting
+    const [isPlaying, setIsPlaying] = useState(true);
+    const [speed, setSpeed] = useState(1);
+    const [commentaryLog, setCommentaryLog] = useState([]);
+    const timerRef = useRef(null);
+    const logEndRef = useRef(null);
+
+    // Accumulate commentary as stages progress
+    useEffect(() => {
+        if (activeStage >= 0 && activeStage < PIPELINE_STAGES.length) {
+            const entry = {
+                stage: activeStage,
+                label: PIPELINE_STAGES[activeStage].label,
+                text: PIPELINE_STAGES[activeStage].commentary(model),
+            };
+            setCommentaryLog(prev => {
+                // On loop restart (stage 0 after stage 6), clear log
+                if (activeStage === 0 && prev.length > 0 && prev[prev.length - 1].stage === PIPELINE_STAGES.length - 1) {
+                    return [entry];
+                }
+                // Avoid duplicates if stage didn't change
+                if (prev.length > 0 && prev[prev.length - 1].stage === activeStage) return prev;
+                return [...prev, entry];
+            });
+        }
+    }, [activeStage, model]);
+
+    // Auto-scroll to latest entry
+    useEffect(() => {
+        if (logEndRef.current) {
+            logEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }, [commentaryLog]);
+
+    // Auto-play through stages
+    useEffect(() => {
+        if (!isPlaying) { clearInterval(timerRef.current); return; }
+        const interval = 2000 / speed;
+        timerRef.current = setInterval(() => {
+            setActiveStage(prev => {
+                if (prev >= PIPELINE_STAGES.length - 1) return 0; // loop
+                return prev + 1;
+            });
+        }, interval);
+        return () => clearInterval(timerRef.current);
+    }, [isPlaying, speed]);
+
+    // Start playing on mount
+    useEffect(() => { setActiveStage(0); }, []);
+
+    const handlePlayPause = () => setIsPlaying(p => !p);
+
     const layerCount = model.L;
-    // Show first 2 layers, dots, last layer
-    const visibleLayers = layerCount > 4
-        ? [0, 1, 'dots', layerCount - 1]
-        : Array.from({ length: layerCount }, (_, i) => i);
 
     return (
         <section className="chapter-section">
@@ -24,107 +85,82 @@ function TransformerFlow({ model }) {
                 architecture: the <strong>Transformer</strong>. It's a stack of identical layers, each containing a
                 self-attention mechanism and a feed-forward network. Your prompt enters on the left as a sequence of
                 tokens, flows through <strong>{layerCount} transformer layers</strong>, and a single next token
-                exits on the right. That token then feeds back as input to generate the next one — this is called
-                <strong>autoregressive generation</strong>, and it's why tokens appear one at a time.
-            </p>
-            <p className="section-desc">
-                Hover over any node below to see {model.name}'s actual dimensions at that stage.
+                exits on the right. That token then feeds back as input — this is called
+                <strong> autoregressive generation</strong>.
             </p>
 
             <div className="arch-flow glass-card">
-                <div className="arch-flow-title">
-                    {model.name} — {layerCount} layers, {model.dmodel}-dim
+                <div className="arch-flow-header">
+                    <span className="arch-flow-title">{model.name} — {layerCount} layers, {model.dmodel}-dim</span>
+                    <div className="arch-flow-controls">
+                        <button className="stepper-btn play" onClick={handlePlayPause} title={isPlaying ? 'Pause' : 'Play'}>
+                            {isPlaying ? '⏸' : '▶'}
+                        </button>
+                        <SpeedControl speed={speed} onSpeedChange={setSpeed} />
+                    </div>
                 </div>
 
                 <div className="arch-pipeline">
-                    {/* Flow track behind everything */}
+                    {/* A flowing dot that follows activeStage */}
                     <div className="arch-flow-track">
                         <div className="arch-data-dot" />
-                        <div className="arch-data-dot" />
-                        <div className="arch-data-dot" />
+                        <div className="arch-data-dot" style={{ animationDelay: '-3s' }} />
+                        <div className="arch-data-dot" style={{ animationDelay: '-6s' }} />
                     </div>
 
                     {/* Input */}
-                    <div className="arch-node embed" onMouseEnter={() => setHoveredNode('embed')} onMouseLeave={() => setHoveredNode(null)}>
-                        <span className="arch-node-label">Embedding</span>
+                    <div className={`arch-node embed ${activeStage === 0 ? 'stage-active' : activeStage > 0 ? 'stage-done' : ''}`}>
+                        <span className="arch-node-label">Input</span>
+                        <span className="arch-node-dim">token</span>
+                    </div>
+
+                    <div className={`arch-arrow ${activeStage >= 1 ? 'active' : ''}`} />
+
+                    {/* Embedding */}
+                    <div className={`arch-node embed ${activeStage === 1 ? 'stage-active' : activeStage > 1 ? 'stage-done' : ''}`}>
+                        <span className="arch-node-label">Embed</span>
                         <span className="arch-node-dim">{model.dmodel}-d</span>
-                        {hoveredNode === 'embed' && (
-                            <div className="arch-layer-detail">
-                                Each token → {model.dmodel}-dim vector.<br />
-                                Vocabulary lookup + position encoding.
-                            </div>
-                        )}
                     </div>
 
-                    <div className="arch-arrow active" />
+                    <div className={`arch-arrow ${activeStage >= 2 ? 'active' : ''}`} />
 
-                    {/* Transformer Layers */}
+                    {/* Layer group */}
                     <div className="arch-layers-group">
-                        {visibleLayers.map((layerIdx, i) => {
-                            if (layerIdx === 'dots') {
-                                return (
-                                    <div key="dots" style={{ display: 'flex', alignItems: 'center' }}>
-                                        <div className="arch-arrow" />
-                                        <div className="arch-layers-dots">
-                                            <span /><span /><span />
-                                            <span style={{ fontSize: '10px', color: 'var(--text-muted)', margin: '0 4px' }}>
-                                                ×{layerCount - 3}
-                                            </span>
-                                        </div>
-                                        <div className="arch-arrow" />
-                                    </div>
-                                );
-                            }
-                            return (
-                                <div key={layerIdx} style={{ display: 'flex', alignItems: 'center' }}>
-                                    {i > 0 && layerIdx !== 'dots' && visibleLayers[i - 1] !== 'dots' && <div className="arch-arrow" />}
-                                    <div
-                                        className={`arch-node layer`}
-                                        onMouseEnter={() => setHoveredNode(`layer-${layerIdx}`)}
-                                        onMouseLeave={() => setHoveredNode(null)}
-                                    >
-                                        <span className="arch-node-label">Layer {layerIdx + 1}</span>
-                                        <span className="arch-node-dim">Attn+FFN</span>
-                                        {hoveredNode === `layer-${layerIdx}` && (
-                                            <div className="arch-layer-detail">
-                                                <div className="detail-row">
-                                                    <span className="detail-label">Attention heads:</span>
-                                                    <span className="detail-value">{model.Hq} (Q) / {model.Hkv} (KV)</span>
-                                                </div>
-                                                <div className="detail-row">
-                                                    <span className="detail-label">Head dim:</span>
-                                                    <span className="detail-value">{model.dhead}</span>
-                                                </div>
-                                                <div className="detail-row">
-                                                    <span className="detail-label">Attention:</span>
-                                                    <span className="detail-value">{model.attnType}</span>
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            );
-                        })}
+                        {/* Layer 1 */}
+                        <div className={`arch-node layer ${activeStage === 2 ? 'stage-active' : activeStage > 2 ? 'stage-done' : ''}`}>
+                            <span className="arch-node-label">Layer 1</span>
+                            <span className="arch-node-dim">Attn+FFN</span>
+                        </div>
+
+                        <div className={`arch-arrow ${activeStage >= 3 ? 'active' : ''}`} />
+
+                        {/* Layer 2 */}
+                        <div className={`arch-node layer ${activeStage === 3 ? 'stage-active' : activeStage > 3 ? 'stage-done' : ''}`}>
+                            <span className="arch-node-label">Layer 2</span>
+                            <span className="arch-node-dim">Attn+FFN</span>
+                        </div>
+
+                        <div className={`arch-arrow ${activeStage >= 4 ? 'active' : ''}`} />
+
+                        {/* Layers 3..N */}
+                        <div className={`arch-node layer layers-rest ${activeStage === 4 ? 'stage-active' : activeStage > 4 ? 'stage-done' : ''}`}>
+                            <span className="arch-node-label">Layers 3–{layerCount}</span>
+                            <span className="arch-node-dim">×{layerCount - 2}</span>
+                        </div>
                     </div>
 
-                    <div className="arch-arrow active" />
+                    <div className={`arch-arrow ${activeStage >= 5 ? 'active' : ''}`} />
 
                     {/* LM Head */}
-                    <div className="arch-node lm-head" onMouseEnter={() => setHoveredNode('lm-head')} onMouseLeave={() => setHoveredNode(null)}>
+                    <div className={`arch-node lm-head ${activeStage === 5 ? 'stage-active' : activeStage > 5 ? 'stage-done' : ''}`}>
                         <span className="arch-node-label">LM Head</span>
                         <span className="arch-node-dim">→ vocab</span>
-                        {hoveredNode === 'lm-head' && (
-                            <div className="arch-layer-detail">
-                                Projects {model.dmodel}-dim → vocabulary logits.<br />
-                                Softmax → probability of next token.
-                            </div>
-                        )}
                     </div>
 
-                    <div className="arch-arrow active" />
+                    <div className={`arch-arrow ${activeStage >= 6 ? 'active' : ''}`} />
 
                     {/* Output */}
-                    <div className="arch-node token-out">
+                    <div className={`arch-node token-out ${activeStage === 6 ? 'stage-active' : ''}`}>
                         <span className="arch-node-label">Next Token</span>
                         <span className="arch-node-dim">↺ feeds back</span>
                     </div>
@@ -135,6 +171,26 @@ function TransformerFlow({ model }) {
                         ↺ Each generated token feeds back as input — this loop repeats for every token in the response
                     </span>
                 </div>
+
+                {/* Running commentary — stacking log */}
+                <div className="pipeline-commentary-log">
+                    {commentaryLog.length === 0 && (
+                        <div className="pipeline-commentary-entry idle">
+                            <span className="commentary-icon">🔍</span>
+                            <span className="commentary-text">Press play to watch a token travel through the transformer pipeline.</span>
+                        </div>
+                    )}
+                    {commentaryLog.map((entry, i) => (
+                        <div
+                            key={`${entry.stage}-${i}`}
+                            className={`pipeline-commentary-entry ${i === commentaryLog.length - 1 ? 'latest' : 'past'}`}
+                        >
+                            <span className="pipeline-entry-badge">{entry.label}</span>
+                            <span className="commentary-text">{entry.text}</span>
+                        </div>
+                    ))}
+                    <div ref={logEndRef} />
+                </div>
             </div>
         </section>
     );
@@ -143,21 +199,21 @@ function TransformerFlow({ model }) {
 
 // ============================================================
 // 2. TOKEN GENERATION STEPPER
-// Step through token generation, see pipeline stages per token,
-// watch KV cache grow block by block
+// Step through token generation with auto-play, speed control,
+// and running commentary per token.
 // ============================================================
 
 const EXAMPLE_PROMPT = ["What", "is", "the", "capital", "of", "France", "?"];
 const EXAMPLE_RESPONSE = ["The", "capital", "of", "France", "is", "Paris", "."];
 
 function TokenStepper({ model }) {
-    const [step, setStep] = useState(0); // 0 = prompt only, 1..7 = generating tokens
+    const [step, setStep] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
-    const [pipelineStage, setPipelineStage] = useState(0); // 0-4 stages within each step
+    const [speed, setSpeed] = useState(1);
+    const [pipelineStage, setPipelineStage] = useState(0);
     const timerRef = useRef(null);
     const totalSteps = EXAMPLE_RESPONSE.length;
 
-    // Pipeline stages for each token
     const stages = [
         { name: 'Embed', val: `${model.dmodel}-d` },
         { name: `${model.L} Layers`, val: 'Attn+FFN' },
@@ -166,56 +222,50 @@ function TokenStepper({ model }) {
         { name: 'Token', val: step > 0 ? EXAMPLE_RESPONSE[step - 1] : '...' },
     ];
 
+    // Commentary per token step
+    const getCommentary = () => {
+        if (step === 0) return 'Press play to start generating tokens. The prompt "What is the capital of France?" will be processed, then the model generates a response token-by-token.';
+        const tok = EXAMPLE_RESPONSE[step - 1];
+        const stageNames = ['embedding the token', `passing through ${model.L} layers`, 'producing logits via LM Head', 'computing softmax probabilities', `outputting "${tok}"`];
+        const stgIdx = Math.min(pipelineStage, 4);
+        return `Token ${step}/${totalSteps}: "${tok}" — currently ${stageNames[stgIdx]}. KV cache now stores K,V for ${EXAMPLE_PROMPT.length + step} tokens across all ${model.L} layers.`;
+    };
+
     // Auto-play logic
     useEffect(() => {
         if (!isPlaying) return;
+        const interval = 500 / speed;
         timerRef.current = setInterval(() => {
             setPipelineStage(prev => {
                 if (prev >= 4) {
-                    // Move to next token
                     setStep(s => {
-                        if (s >= totalSteps) {
-                            setIsPlaying(false);
-                            return s;
-                        }
+                        if (s >= totalSteps) { setIsPlaying(false); return s; }
                         return s + 1;
                     });
                     return 0;
                 }
                 return prev + 1;
             });
-        }, 500);
+        }, interval);
         return () => clearInterval(timerRef.current);
-    }, [isPlaying, totalSteps]);
+    }, [isPlaying, totalSteps, speed]);
 
     const handlePlay = () => {
-        if (step >= totalSteps) {
-            setStep(0);
-            setPipelineStage(0);
-        }
+        if (step >= totalSteps) { setStep(0); setPipelineStage(0); }
         setIsPlaying(p => !p);
     };
 
     const handleStep = (dir) => {
         setIsPlaying(false);
-        if (dir > 0 && step < totalSteps) {
-            setStep(s => s + 1);
-            setPipelineStage(4); // show completed
-        } else if (dir < 0 && step > 0) {
-            setStep(s => s - 1);
-            setPipelineStage(0);
-        }
+        if (dir > 0 && step < totalSteps) { setStep(s => s + 1); setPipelineStage(4); }
+        else if (dir < 0 && step > 0) { setStep(s => s - 1); setPipelineStage(0); }
     };
 
-    const handleReset = () => {
-        setIsPlaying(false);
-        setStep(0);
-        setPipelineStage(0);
-    };
+    const handleReset = () => { setIsPlaying(false); setStep(0); setPipelineStage(0); };
 
     // KV cache calculations
-    const tokensInCache = EXAMPLE_PROMPT.length + step; // prompt + generated so far
-    const kvPerToken = 2 * model.L * model.Hkv * model.dhead * 2; // bytes, FP16
+    const tokensInCache = EXAMPLE_PROMPT.length + step;
+    const kvPerToken = 2 * model.L * model.Hkv * model.dhead * 2;
     const currentKV = tokensInCache * kvPerToken;
     const maxTokensShown = EXAMPLE_PROMPT.length + totalSteps;
 
@@ -229,22 +279,18 @@ function TokenStepper({ model }) {
                 a structure called the <strong>KV cache</strong>. This cache lets the model remember what it has
                 already computed, so it doesn't have to recompute everything from scratch for each new token.
             </p>
-            <p className="section-desc">
-                Press play or step through manually — watch the KV cache grow with every token generated.
-            </p>
 
             <div className="token-stepper glass-card">
                 {/* Controls */}
                 <div className="stepper-controls">
                     <button className="stepper-btn" onClick={handleReset} title="Reset">↺</button>
                     <button className="stepper-btn" onClick={() => handleStep(-1)} disabled={step === 0} title="Previous">◀</button>
-                    <button className={`stepper-btn play`} onClick={handlePlay} title={isPlaying ? 'Pause' : 'Play'}>
+                    <button className="stepper-btn play" onClick={handlePlay} title={isPlaying ? 'Pause' : 'Play'}>
                         {isPlaying ? '⏸' : '▶'}
                     </button>
                     <button className="stepper-btn" onClick={() => handleStep(1)} disabled={step >= totalSteps} title="Next">▶</button>
-                    <span className="stepper-progress">
-                        Token {step}/{totalSteps}
-                    </span>
+                    <SpeedControl speed={speed} onSpeedChange={setSpeed} />
+                    <span className="stepper-progress">Token {step}/{totalSteps}</span>
                 </div>
 
                 {/* Prompt + generated tokens */}
@@ -298,6 +344,9 @@ function TokenStepper({ model }) {
                     <strong>{model.Hkv} KV heads</strong> × <strong>{model.dhead} dims</strong> ={' '}
                     <span className="mono" style={{ color: 'var(--text-accent)' }}>{formatBytes(kvPerToken)}/token</span>
                 </div>
+
+                {/* Commentary */}
+                <AnimationCommentary text={getCommentary()} icon="📝" />
             </div>
         </section>
     );
@@ -310,20 +359,16 @@ function TokenStepper({ model }) {
 // ============================================================
 
 function PrefillDecode({ model, gpu }) {
-    const [activePhase, setActivePhase] = useState('both'); // 'prefill', 'decode', 'both'
+    const [activePhase, setActivePhase] = useState('both');
     const [decodeStep, setDecodeStep] = useState(0);
 
-    // Animate decode step
     useEffect(() => {
         if (activePhase !== 'decode' && activePhase !== 'both') return;
-        const timer = setInterval(() => {
-            setDecodeStep(s => (s + 1) % 7);
-        }, 800);
+        const timer = setInterval(() => { setDecodeStep(s => (s + 1) % 7); }, 800);
         return () => clearInterval(timer);
     }, [activePhase]);
 
     const promptTokens = 7;
-    const genTokens = 7;
 
     return (
         <section className="chapter-section">
@@ -336,7 +381,7 @@ function PrefillDecode({ model, gpu }) {
                 But during the <strong>decode phase</strong>, the model generates one token at a time. Each token
                 requires reading the full model weights ({formatBytes(modelWeightSize(model, 2))} for {model.name})
                 from memory — but only does a tiny amount of compute per token. The GPU spends most of its time
-                <em>waiting for data to arrive</em> from memory, not actually computing.
+                <em> waiting for data to arrive</em> from memory, not actually computing.
             </p>
             <p className="section-desc">
                 This is the fundamental insight: <strong>LLM inference is memory-bound, not compute-bound.</strong>
@@ -364,7 +409,6 @@ function PrefillDecode({ model, gpu }) {
                                 All {promptTokens} prompt tokens processed <strong>in parallel</strong>.
                                 Matrix-matrix multiply — GPU fully utilized.
                             </div>
-
                             <div className="pd-tokens">
                                 {EXAMPLE_PROMPT.map((tok, i) => (
                                     <div key={i} className="pd-token parallel" style={{ animationDelay: `${i * 50}ms` }} title={tok}>
@@ -372,7 +416,6 @@ function PrefillDecode({ model, gpu }) {
                                     </div>
                                 ))}
                             </div>
-
                             <div className="pd-gpu-bar">
                                 <div className="pd-gpu-label">
                                     <span>GPU Compute Utilization</span>
@@ -382,7 +425,6 @@ function PrefillDecode({ model, gpu }) {
                                     <div className="pd-gpu-fill prefill-fill" />
                                 </div>
                             </div>
-
                             <div className="pd-bandwidth">
                                 <span>Data flow:</span>
                                 <div className="pd-pipe thick" />
@@ -399,7 +441,6 @@ function PrefillDecode({ model, gpu }) {
                                 <strong>One token at a time</strong>. Each step: read {formatBytes(modelWeightSize(model, 2))} of
                                 weights from memory for a single token. Matrix-vector multiply — GPU mostly idle, waiting for memory.
                             </div>
-
                             <div className="pd-tokens">
                                 {EXAMPLE_RESPONSE.map((tok, i) => (
                                     <div
@@ -411,7 +452,6 @@ function PrefillDecode({ model, gpu }) {
                                     </div>
                                 ))}
                             </div>
-
                             <div className="pd-gpu-bar">
                                 <div className="pd-gpu-label">
                                     <span>GPU Compute Utilization</span>
@@ -421,7 +461,6 @@ function PrefillDecode({ model, gpu }) {
                                     <div className={`pd-gpu-fill decode-fill ${decodeStep % 2 === 0 ? 'active-decode' : ''}`} />
                                 </div>
                             </div>
-
                             <div className="pd-bandwidth">
                                 <span>Data flow:</span>
                                 <div className="pd-pipe thin" />
@@ -463,7 +502,7 @@ function MemoryStack({ model, gpu }) {
     const totalBytes = weightBytes + kvBytes;
     const budgetBytes = gpu.budget_mb * 1024 * 1024;
 
-    const maxBarBytes = Math.max(totalBytes, budgetBytes) * 1.1; // 10% padding
+    const maxBarBytes = Math.max(totalBytes, budgetBytes) * 1.1;
     const weightPct = (weightBytes / maxBarBytes) * 100;
     const kvPct = (kvBytes / maxBarBytes) * 100;
     const budgetPct = (budgetBytes / maxBarBytes) * 100;
@@ -473,8 +512,11 @@ function MemoryStack({ model, gpu }) {
 
     // Max tokens before overflow
     const kvBudget = budgetBytes - weightBytes;
-    const kvPerToken = 2 * model.L * model.Hkv * model.dhead * 2; // FP16
+    const kvPerToken = 2 * model.L * model.Hkv * model.dhead * 2;
     const maxTokens = Math.max(0, Math.floor(kvBudget / kvPerToken));
+
+    // Note when cache fits easily
+    const fitsEasily = doesFit && parseFloat(utilizationPct) < 30;
 
     return (
         <section className="chapter-section">
@@ -491,6 +533,8 @@ function MemoryStack({ model, gpu }) {
                 on {gpu.name}.
             </p>
 
+            <SmallModelNote kvBytes={kvCacheSize(model, 2048)} />
+
             <div className="mem-stack glass-card">
                 <div className="mem-stack-title">
                     {gpu.name} — {gpu.budget_mb >= 1024 ? (gpu.budget_mb / 1024) + ' GB' : gpu.budget_mb + ' MB'} total
@@ -498,25 +542,15 @@ function MemoryStack({ model, gpu }) {
 
                 {/* Stacked bar */}
                 <div className="mem-stack-bar">
-                    {/* Weights segment */}
-                    <div
-                        className="mem-stack-segment weights"
-                        style={{ width: `${weightPct}%` }}
-                    >
+                    <div className="mem-stack-segment weights" style={{ width: `${weightPct}%` }}>
                         <span className="mem-seg-label">Weights {formatBytes(weightBytes)}</span>
                     </div>
-
-                    {/* KV cache segment */}
                     <div
                         className={`mem-stack-segment kv-cache ${!doesFit ? 'overflow-zone' : ''}`}
                         style={{ left: `${weightPct}%`, width: `${kvPct}%` }}
                     >
-                        {kvPct > 8 && (
-                            <span className="mem-seg-label">KV {formatBytes(kvBytes)}</span>
-                        )}
+                        {kvPct > 8 && <span className="mem-seg-label">KV {formatBytes(kvBytes)}</span>}
                     </div>
-
-                    {/* Budget line */}
                     <div className="mem-stack-budget" style={{ left: `${budgetPct}%` }}>
                         {gpu.budget_mb >= 1024 ? `${(gpu.budget_mb / 1024)} GB` : `${gpu.budget_mb} MB`} limit
                     </div>
@@ -564,6 +598,13 @@ function MemoryStack({ model, gpu }) {
                         : `❌ Overflow! ${formatBytes(totalBytes)} required, only ${formatBytes(budgetBytes)} available. Reduce to ≤${maxTokens.toLocaleString()} tokens.`
                     }
                 </div>
+
+                {/* Note when cache fits easily */}
+                {fitsEasily && (
+                    <div style={{ marginTop: 'var(--space-sm)', padding: 'var(--space-xs) var(--space-md)', background: 'rgba(255, 215, 59, 0.06)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-xs)', color: 'var(--text-muted)', textAlign: 'center' }}>
+                        💡 With this GPU, {model.name} fits comfortably. Try selecting a <strong>larger model</strong> (Llama-2-7B) or a <strong>smaller GPU</strong> (Raspberry Pi 4) to see memory pressure.
+                    </div>
+                )}
             </div>
         </section>
     );
@@ -580,8 +621,21 @@ export default function Prologue({ selectedModel, selectedGPU }) {
 
     return (
         <div className="chapter prologue animate-in">
+            {/* Prerequisite notice */}
+            <div className="prerequisite-notice">
+                <span className="prerequisite-icon">📚</span>
+                <span className="prerequisite-text">
+                    <strong>Prerequisite:</strong> This guide assumes familiarity with Transformer architecture.
+                    New to Transformers? Read{' '}
+                    <a href="https://jalammar.github.io/illustrated-transformer/" target="_blank" rel="noopener noreferrer" className="prerequisite-link">
+                        The Illustrated Transformer — Jay Alammar
+                    </a>
+                    {' '}first.
+                </span>
+            </div>
+
             <div className="chapter-header">
-                <h2 className="chapter-title">What happens when you press Enter?</h2>
+                <h2 className="chapter-title">The Inference Engine — What Happens When You Press Enter?</h2>
                 <p className="chapter-hook">
                     You type a prompt, hit Enter, and tokens appear one by one.
                     Behind that simple interface lies a memory bottleneck that determines

@@ -63,6 +63,47 @@
 }
 
 /* ============================================================
+   PREREQUISITE NOTICE
+   ============================================================ */
+
+.prerequisite-notice {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-lg);
+    background: rgba(78, 205, 196, 0.06);
+    border: 1px solid rgba(78, 205, 196, 0.12);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-md);
+}
+
+.prerequisite-icon {
+    font-size: var(--fs-md);
+    flex-shrink: 0;
+}
+
+.prerequisite-text {
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.prerequisite-text strong {
+    color: var(--text-primary);
+}
+
+.prerequisite-link {
+    color: var(--accent-secondary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    transition: opacity var(--transition-fast);
+}
+
+.prerequisite-link:hover {
+    opacity: 0.8;
+}
+
+/* ============================================================
    1. TRANSFORMER ARCHITECTURE FLOW
    ============================================================ */
 
@@ -71,14 +112,27 @@
     overflow-x: auto;
 }
 
+.arch-flow-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    margin-bottom: var(--space-lg);
+    flex-wrap: wrap;
+}
+
 .arch-flow-title {
     font-size: var(--fs-sm);
     font-weight: var(--fw-semibold);
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    margin-bottom: var(--space-lg);
-    text-align: center;
+}
+
+.arch-flow-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
 }
 
 /* Pipeline */
@@ -150,6 +204,39 @@
 .arch-node.token-out {
     border-color: rgba(78, 205, 196, 0.4);
     background: rgba(78, 205, 196, 0.08);
+}
+
+/* Stage-active: currently processing node in auto-play */
+.arch-node.stage-active {
+    border-color: var(--accent-primary);
+    background: var(--accent-primary-glow);
+    color: var(--text-primary);
+    box-shadow: 0 0 16px rgba(124, 106, 255, 0.3);
+    animation: stage-pulse 1s ease-in-out infinite;
+    z-index: 10;
+}
+
+@keyframes stage-pulse {
+
+    0%,
+    100% {
+        box-shadow: 0 0 8px rgba(124, 106, 255, 0.2);
+    }
+
+    50% {
+        box-shadow: 0 0 20px rgba(124, 106, 255, 0.4);
+    }
+}
+
+.arch-node.stage-done {
+    border-color: rgba(78, 205, 196, 0.25);
+    background: rgba(78, 205, 196, 0.04);
+    color: var(--text-muted);
+}
+
+/* Collapsed layers node (wider) */
+.arch-node.layers-rest {
+    min-width: 100px;
 }
 
 /* Arrows between nodes */
@@ -1017,4 +1104,76 @@
     .stepper-pipeline {
         overflow-x: auto;
     }
+}
+
+/* ============================================================
+   Pipeline Stacking Commentary Log
+   Only used by TransformerFlow on the Intro page.
+   ============================================================ */
+
+.pipeline-commentary-log {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 260px;
+    overflow-y: auto;
+    padding: var(--space-sm);
+    margin-top: var(--space-sm);
+    background: rgba(124, 106, 255, 0.03);
+    border: 1px solid rgba(124, 106, 255, 0.08);
+    border-radius: var(--radius-md);
+    scroll-behavior: smooth;
+}
+
+.pipeline-commentary-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    transition: opacity 300ms ease, background 300ms ease;
+}
+
+.pipeline-commentary-entry.idle {
+    opacity: 0.6;
+}
+
+.pipeline-commentary-entry.past {
+    opacity: 0.55;
+    background: transparent;
+}
+
+.pipeline-commentary-entry.latest {
+    background: rgba(124, 106, 255, 0.08);
+    border-left: 3px solid var(--accent-primary);
+    animation: log-entry-in 400ms ease;
+}
+
+@keyframes log-entry-in {
+    0% {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.pipeline-entry-badge {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: var(--fw-bold);
+    padding: 1px 8px;
+    border-radius: var(--radius-full);
+    background: var(--accent-primary);
+    color: white;
+    white-space: nowrap;
+    margin-top: 2px;
+}
+
+.pipeline-commentary-entry.past .pipeline-entry-badge {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
 }

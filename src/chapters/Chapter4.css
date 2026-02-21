@@ -443,3 +443,28 @@
         max-width: 280px;
     }
 }
+
+/* ============================================================
+   NEW: Wave quantization animation
+   ============================================================ */
+
+.weight-cell.wave-hit {
+    animation: waveFlash 300ms ease forwards;
+}
+
+@keyframes waveFlash {
+    0% {
+        transform: scale(1);
+        filter: brightness(1);
+    }
+
+    40% {
+        transform: scale(1.25);
+        filter: brightness(1.6);
+    }
+
+    100% {
+        transform: scale(1);
+        filter: brightness(1);
+    }
+}

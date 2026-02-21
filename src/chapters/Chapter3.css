@@ -408,3 +408,35 @@
         min-width: unset !important;
     }
 }
+
+/* ============================================================
+   NEW: Step-by-step replay highlighting
+   ============================================================ */
+
+.flow-step {
+    transition: all 300ms ease;
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-xs);
+}
+
+.flow-step.step-active {
+    background: rgba(124, 106, 255, 0.1);
+    border-left: 3px solid var(--accent-primary);
+    box-shadow: 0 0 12px rgba(124, 106, 255, 0.15);
+}
+
+.flow-step.step-active .flow-step-num {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
+}
+
+.flow-step.step-done {
+    opacity: 0.45;
+}
+
+.flow-step.step-done .flow-step-num {
+    background: var(--accent-secondary);
+    color: white;
+    border-color: var(--accent-secondary);
+}

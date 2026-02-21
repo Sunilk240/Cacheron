@@ -1,7 +1,7 @@
 import './ChapterNav.css';
 
 const CHAPTERS = [
-    { id: 'prologue', label: 'Prologue', subtitle: 'What happens when you press Enter?' },
+    { id: 'prologue', label: 'Intro', subtitle: 'The Inference Engine' },
     { id: 'chapter1', label: 'Ch 1', subtitle: 'Attention & KV Cache' },
     { id: 'chapter2', label: 'Ch 2', subtitle: 'Shrinking the Cache' },
     { id: 'chapter3', label: 'Ch 3', subtitle: 'Flash Attention' },

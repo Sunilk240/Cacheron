@@ -1,0 +1,125 @@
+.tutorial-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: tutorial-fade-in 300ms ease;
+}
+
+@keyframes tutorial-fade-in {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+.tutorial-card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-lg);
+    padding: var(--space-xl);
+    max-width: 420px;
+    width: 90%;
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+    animation: tutorial-slide-up 400ms ease;
+}
+
+@keyframes tutorial-slide-up {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.tutorial-step-indicator {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: var(--space-lg);
+}
+
+.tutorial-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    transition: all 300ms ease;
+}
+
+.tutorial-dot.active {
+    background: var(--accent-primary);
+    transform: scale(1.3);
+}
+
+.tutorial-dot.done {
+    background: var(--accent-secondary);
+}
+
+.tutorial-title {
+    font-size: var(--fs-lg);
+    font-weight: var(--fw-bold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-sm);
+    text-align: center;
+}
+
+.tutorial-desc {
+    font-size: var(--fs-sm);
+    color: var(--text-secondary);
+    line-height: 1.6;
+    text-align: center;
+    margin-bottom: var(--space-lg);
+}
+
+.tutorial-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.tutorial-skip {
+    padding: var(--space-xs) var(--space-md);
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-full);
+    font-family: var(--font-sans);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.tutorial-skip:hover {
+    border-color: var(--border-glass);
+    color: var(--text-primary);
+}
+
+.tutorial-next {
+    padding: var(--space-xs) var(--space-lg);
+    background: var(--accent-primary);
+    border: none;
+    border-radius: var(--radius-full);
+    font-family: var(--font-sans);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    color: white;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.tutorial-next:hover {
+    background: var(--accent-primary-hover, #6b5ce7);
+    transform: translateY(-1px);
+}

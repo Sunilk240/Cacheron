@@ -783,3 +783,93 @@
         gap: 4px;
     }
 }
+
+/* ============================================================
+   NEW: QKV Controls Layout
+   ============================================================ */
+
+.qkv-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+}
+
+/* QKV animation states */
+.qkv-branch.dim {
+    opacity: 0.3;
+    pointer-events: none;
+}
+
+.qkv-weight-box.computing {
+    box-shadow: 0 0 12px currentColor;
+    animation: stage-pulse 0.8s ease-in-out infinite;
+}
+
+.qkv-result-box.visible,
+.qkv-cache-badge.visible {
+    animation: fadeInScale 300ms ease both;
+}
+
+.qkv-token-box.stage-active,
+.qkv-embed-box.stage-active {
+    box-shadow: 0 0 12px rgba(78, 205, 196, 0.3);
+}
+
+.qkv-embed-arrow.active,
+.qkv-arrows-down.active {
+    color: var(--text-accent);
+}
+
+/* ============================================================
+   NEW: Attention Heatmap Cell Animation
+   ============================================================ */
+
+.attn-heat-cell.cell-animate {
+    animation: cellFlash 200ms ease both;
+}
+
+@keyframes cellFlash {
+    0% {
+        transform: scale(0.7);
+        opacity: 0;
+    }
+
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* ============================================================
+   NEW: KV Cache Overflow States
+   ============================================================ */
+
+.kv-accum-fill.overflow {
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-warm));
+}
+
+.kv-accum-value.overflow-text {
+    color: var(--accent-warm);
+}
+
+/* ============================================================
+   NEW: Overflow Demo Counter
+   ============================================================ */
+
+.overflow-counter {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    margin: var(--space-md) 0;
+}
+
+.overflow-token-count {
+    font-size: var(--fs-3xl);
+    font-weight: var(--fw-extra);
+    font-family: var(--font-mono);
+    letter-spacing: -0.02em;
+    line-height: 1;
+    transition: color 300ms ease;
+}
