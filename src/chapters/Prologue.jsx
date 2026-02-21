@@ -104,9 +104,12 @@ function TransformerFlow({ model }) {
                 <div className="arch-pipeline">
                     {/* A flowing dot that follows activeStage */}
                     <div className="arch-flow-track">
-                        <div className="arch-data-dot" />
-                        <div className="arch-data-dot" style={{ animationDelay: '-3s' }} />
-                        <div className="arch-data-dot" style={{ animationDelay: '-6s' }} />
+                        {activeStage >= 0 && (
+                            <div
+                                className="arch-data-dot synced"
+                                style={{ left: `${(activeStage / (PIPELINE_STAGES.length - 1)) * 100}%` }}
+                            />
+                        )}
                     </div>
 
                     {/* Input */}
